@@ -505,20 +505,30 @@ fn an_agent_launchd_fails_to_load_is_not_left_installed() {
     assert!(launchd.loaded().is_empty());
 }
 
+/// Rex moves its CLI on updates, so the agent doesn't pin one: with no `rex`
+/// on its `PATH`, save runs the one a running Rex server runs (ADR-0003).
 #[test]
-fn install_without_rex_on_path_fails_and_installs_nothing() {
+fn the_agent_gets_only_the_system_path_whether_or_not_rex_is_on_path_at_install() {
     let env = TestEnv::new();
     let launchd = FakeLaunchd::new(&env);
+    let with_rex = env.rexurrect_at(NO_SERVER);
+    let without_rex = env.rexurrect_at(NO_SERVER).env("PATH", "/usr/bin:/bin");
 
-    let out = launchd
-        .aim(env.rexurrect_at(NO_SERVER).env("PATH", "/usr/bin:/bin"))
-        .args(["autosave", "install"])
-        .run()
-        .assert_failure();
+    for install in [with_rex, without_rex] {
+        launchd
+            .aim(install)
+            .args(["autosave", "install"])
+            .run()
+            .assert_success();
 
-    assert!(out.stderr.contains("`rex`"), "{out}");
-    assert!(launchd.installed().is_empty());
-    assert!(launchd.loaded().is_empty());
+        let agent = launchd.the_agent();
+        assert!(
+            agent
+                .environment()
+                .contains(&("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")),
+            "{agent:?}"
+        );
+    }
 }
 
 #[test]

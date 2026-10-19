@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use crate::error::{Context, Result};
+use crate::error::{Context, Error, Result};
 
 /// A process's full command line: its arguments joined by spaces, with any
 /// quoting lost. `None` if the process has already exited.
@@ -15,14 +15,33 @@ pub fn command_line(pid: u32) -> Result<Option<String>> {
 /// A process's parent and the path of its executable. `None` if the process
 /// has already exited.
 pub fn parent_and_executable(pid: u32) -> Result<Option<(u32, PathBuf)>> {
-    let Some(line) = ps(pid, &["-o", "ppid=,comm="])? else {
-        return Ok(None);
-    };
-    // `comm` comes last and may contain spaces (`/Applications/Rex Beta.app/...`).
-    let parsed = line
-        .split_once(char::is_whitespace)
-        .and_then(|(ppid, executable)| Some((ppid.parse().ok()?, executable.trim().into())));
-    Ok(parsed)
+    let line = ps(pid, &["-o", "ppid=,comm="])?;
+    Ok(line.as_deref().and_then(pid_and_executable))
+}
+
+/// Every process's pid and the path of its executable.
+pub fn executables() -> Result<Vec<(u32, PathBuf)>> {
+    let out = Command::new("ps")
+        .args(["-ax", "-o", "pid=,comm="])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .with_context(|| "running ps")?;
+    if !out.status.success() {
+        return Err(Error::new(format!(
+            "`ps -ax` failed ({}) listing processes",
+            out.status
+        )));
+    }
+    let listing = String::from_utf8_lossy(&out.stdout);
+    Ok(listing.lines().filter_map(pid_and_executable).collect())
+}
+
+/// A pid, then the path of an executable, as `ps` prints `<pid>=,comm=`.
+/// `comm` comes last and may contain spaces (`/Applications/Rex Beta.app/...`).
+fn pid_and_executable(line: &str) -> Option<(u32, PathBuf)> {
+    let (pid, executable) = line.trim().split_once(char::is_whitespace)?;
+    Some((pid.parse().ok()?, executable.trim().into()))
 }
 
 /// Whether a process with this pid exists.

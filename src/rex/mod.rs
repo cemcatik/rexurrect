@@ -8,15 +8,19 @@
 //! - `-S` explicitly whenever there's an endpoint: `REX_SERVER`, or one given
 //!   ([`Rex::at`]). If that server isn't running, a bare `rex` silently falls
 //!   back to its default endpoint, which may be a different (real) server.
+//!
+//! The `rex` it runs is the one on `PATH`, else the one a running Rex server
+//! runs: Rex has no stable path to its CLI (ADR-0003).
 
 pub mod api;
 pub mod server_process;
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -24,7 +28,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+use crate::account;
+use crate::error::{Error, Result};
 use crate::settings;
+
+use server_process::ServerProcess;
 
 use api::{
     CreateSession, CreatedSession, FormatArgs, ServerStatus, SessionList, SessionSummary,
@@ -74,7 +82,7 @@ pub struct BlockRef {
     pub block_id: String,
 }
 
-/// A handle on one Rex server, reached through the `rex` CLI on `PATH`.
+/// A handle on one Rex server, reached through a `rex` CLI.
 #[derive(Debug, Clone)]
 pub struct Rex {
     program: OsString,
@@ -85,9 +93,11 @@ pub struct Rex {
 /// Why a `rex` call failed.
 #[derive(Debug)]
 pub enum RexError {
-    /// `rex` couldn't be run at all (not on `PATH`, ...).
+    /// The `rex` at `program` couldn't be run at all (gone since a Rex
+    /// update, ...).
     Spawn {
         method: String,
+        program: PathBuf,
         error: std::io::Error,
     },
     /// No server at the endpoint (`rex` exit status 4). Autostart is off, so
@@ -106,8 +116,16 @@ pub enum RexError {
 impl fmt::Display for RexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RexError::Spawn { method, error } => {
-                write!(f, "couldn't run `rex api call {method}`: {error}")
+            RexError::Spawn {
+                method,
+                program,
+                error,
+            } => {
+                write!(
+                    f,
+                    "couldn't run `rex api call {method}` with {}: {error}",
+                    program.display()
+                )
             }
             RexError::NotRunning { method, message } => {
                 write!(
@@ -163,14 +181,54 @@ fn error_code(message: &str) -> Option<&str> {
     code.strip_prefix("code=")
 }
 
-impl Rex {
-    /// The server in `REX_SERVER`, or `rex`'s own default when it's unset.
-    pub fn from_env() -> Rex {
-        Rex {
-            program: "rex".into(),
-            server: settings::env_non_empty(SERVER_VAR),
-            timeout: None,
+/// The first executable `rex` on `PATH`: the one a shell would run.
+fn rex_on_path() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("rex"))
+        .find(|rex| is_executable(rex))
+}
+
+fn is_executable(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+/// The `rex` a running Rex server runs, to call `server` (rex's default
+/// endpoint if `None`) through: see [`server_process::choose`]. With no
+/// server running at all, there's none at the endpoint either.
+fn a_running_servers_rex(server: Option<&OsStr>) -> Result<PathBuf> {
+    let endpoint = match server {
+        Some(server) => server.to_string_lossy().into_owned(),
+        None => {
+            let xdg_runtime_dir = settings::env_non_empty("XDG_RUNTIME_DIR").map(PathBuf::from);
+            default_endpoint(xdg_runtime_dir.as_deref(), &account::home()?)
         }
+    };
+    let servers = ServerProcess::running()?;
+    let server = server_process::choose(&servers, &endpoint).ok_or_else(|| {
+        Error::new(format!(
+            "the Rex server at {endpoint} isn't running: no Rex server is running, and there's \
+             no `rex` on PATH"
+        ))
+    })?;
+    Ok(server.program.clone())
+}
+
+impl Rex {
+    /// The server in `REX_SERVER`, or `rex`'s own default when it's unset,
+    /// reached through the `rex` on `PATH`, else through the `rex` a running
+    /// Rex server runs. Autosave's agent never has `rex` on its `PATH`.
+    pub fn from_env() -> Result<Rex> {
+        let server = settings::env_non_empty(SERVER_VAR);
+        let program = match rex_on_path() {
+            Some(rex) => rex,
+            None => a_running_servers_rex(server.as_deref())?,
+        };
+        Ok(Rex {
+            program: program.into(),
+            server,
+            timeout: None,
+        })
     }
 
     /// The server at `endpoint`, reached through the `rex` CLI at `program`.
@@ -215,6 +273,7 @@ impl Rex {
             .spawn();
         let spawn_error = |error| RexError::Spawn {
             method: method.to_string(),
+            program: PathBuf::from(&self.program),
             error,
         };
         let mut child = spawned.map_err(spawn_error)?;
@@ -306,5 +365,22 @@ impl Rex {
             "block.method",
             &json!({ "session_id": session_id, "block_id": block_id, "method": method, "args": args }),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rex moves its CLI on updates, so "No such file or directory" alone
+    /// doesn't say what went missing.
+    #[test]
+    fn a_rex_that_cant_be_run_is_named_in_the_error() {
+        let program = "/gone/Versions/1202/Rex Server.app/Contents/MacOS/rex";
+        let error = Rex::at(program, "unix:///tmp/rxt-none/s.sock")
+            .server_status()
+            .unwrap_err();
+        assert!(matches!(error, RexError::Spawn { .. }), "{error}");
+        assert!(error.to_string().contains(program), "{error}");
     }
 }
