@@ -19,10 +19,11 @@ pub fn parent_and_executable(pid: u32) -> Result<Option<(u32, PathBuf)>> {
     Ok(line.as_deref().and_then(pid_and_executable))
 }
 
-/// Every process's pid and the path of its executable.
-pub fn executables() -> Result<Vec<(u32, PathBuf)>> {
+/// The pid and the path of the executable of every process this user runs.
+/// Never another user's: whoever owns a process can replace its executable.
+pub fn own_executables() -> Result<Vec<(u32, PathBuf)>> {
     let out = Command::new("ps")
-        .args(["-ax", "-o", "pid=,comm="])
+        .args(["-ax", "-o", "uid=,pid=,comm="])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -33,8 +34,22 @@ pub fn executables() -> Result<Vec<(u32, PathBuf)>> {
             out.status
         )));
     }
-    let listing = String::from_utf8_lossy(&out.stdout);
-    Ok(listing.lines().filter_map(pid_and_executable).collect())
+    // `ps`'s `uid` is the effective one. SAFETY: geteuid can't fail and has
+    // no preconditions.
+    let uid = unsafe { libc::geteuid() };
+    Ok(executables_of(uid, &String::from_utf8_lossy(&out.stdout)))
+}
+
+/// The processes `uid` runs, from `ps`'s `uid=,pid=,comm=` listing.
+fn executables_of(uid: u32, listing: &str) -> Vec<(u32, PathBuf)> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let (owner, process) = line.trim().split_once(char::is_whitespace)?;
+            (owner.parse() == Ok(uid)).then_some(process)
+        })
+        .filter_map(pid_and_executable)
+        .collect()
 }
 
 /// A pid, then the path of an executable, as `ps` prints `<pid>=,comm=`.
@@ -94,4 +109,28 @@ fn ps(pid: u32, format: &[&str]) -> Result<Option<String>> {
         .with_context(|| "running ps")?;
     let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
     Ok((out.status.success() && !line.is_empty()).then_some(line))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Another user's `rex` is theirs to replace: running it would run their
+    /// code as this user.
+    #[test]
+    fn only_the_users_own_processes_are_listed() {
+        let listing = "  0   1 /sbin/launchd
+  502 10280 /Users/you/Library/Application Support/com.superlogical.rex/RexServer/Versions/1203/Rex Server.app/Contents/MacOS/rex
+  503 20000 /Users/other/bin/rex
+";
+        assert_eq!(
+            executables_of(502, listing),
+            [(
+                10280,
+                PathBuf::from(
+                    "/Users/you/Library/Application Support/com.superlogical.rex/RexServer/Versions/1203/Rex Server.app/Contents/MacOS/rex"
+                )
+            )]
+        );
+    }
 }

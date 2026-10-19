@@ -235,9 +235,10 @@ every 15 minutes while Rex is quit gets it there in a few months), it keeps only
 Autosave saves the server `autosave install` names (see [Autosave](#autosave)).
 
 rexurrect calls that server through the `rex` on your `PATH`. With no `rex` there, it runs the
-`rex` a running Rex server runs: the server listening at that endpoint, if its command line says
-so, otherwise any. It names the endpoint in every call, so whichever `rex` it runs reaches the
-same server. Rex moves its CLI when it updates, so this is how autosave finds one (see
+`rex` a Rex server of yours runs: the server listening at that endpoint, if its command line
+says so, otherwise any (never another user's). It names the endpoint in every call, so
+whichever `rex` it runs reaches the same server. Rex moves its CLI when it updates, so this is
+how autosave finds one (see
 [ADR-0003](docs/adr/0003-reach-rex-through-a-running-servers-executable.md)).
 
 ### Where state lives

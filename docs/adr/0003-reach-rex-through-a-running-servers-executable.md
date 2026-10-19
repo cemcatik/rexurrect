@@ -16,5 +16,6 @@
 
 - With no `rex` on `PATH` and no `rex server run` running, there's nothing to save: the command fails as it does when the server isn't running, and logs it.
 - Autosave depends on what `ps` shows of a running server: its executable's path and the `--listen` on its command line.
+- Only the user's own servers count. Another user's `rex server run` runs an executable that user can replace, and running it would run their code as this user.
 - With two Rex builds running at once and the endpoint's server started without `--listen`, autosave may call it through the other build's CLI.
 - An agent installed before this pinned a `rex` directory on its `PATH`. One that still exists after a Rex update is used ahead of the lookup, so the README asks users to run `autosave install` once after upgrading rexurrect.

@@ -86,10 +86,10 @@ fn is_rex(executable: &Path) -> bool {
 }
 
 impl ServerProcess {
-    /// Every running Rex server.
+    /// Every Rex server this user runs.
     pub fn running() -> Result<Vec<ServerProcess>> {
         let mut servers = Vec::new();
-        for (pid, executable) in process::executables()? {
+        for (pid, executable) in process::own_executables()? {
             if !is_rex(&executable) {
                 continue;
             }
