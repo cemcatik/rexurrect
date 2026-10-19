@@ -288,11 +288,30 @@ fn rex_config_check_runs_the_hook_but_nothing_is_restored() {
     assert_eq!(env.log_entries(), Vec::<String>::new());
 }
 
+/// `rex.exec` captures what auto-restore prints, so the hook passes its
+/// stderr on: the server's own log is where a user looks when nothing came
+/// back.
+#[test]
+fn an_auto_restore_that_fails_at_once_says_why_in_the_servers_log() {
+    let env = TestEnv::new();
+    env.saved_on_an_earlier_server(&["zz-proj"]);
+
+    let server = env
+        .server()
+        .init_lua(hook(&env))
+        .env("REXURRECT_READY_TIMEOUT", "soon")
+        .start();
+
+    let log = server.log();
+    assert!(log.contains("REXURRECT_READY_TIMEOUT"), "{log}");
+    assert_eq!(server.sessions(), []);
+}
+
 /// An init.lua line that keeps the server from becoming ready until `go`
 /// exists (for at most 30 seconds, so nothing outlives a failed test).
 fn held_until(go: &Path) -> String {
     format!(
-        "os.execute([[for i in $(seq 300); do [ -e '{}' ] && break; sleep 0.1; done]])\n",
+        "rex.exec({{ \"/bin/sh\", \"-c\", [[for i in $(seq 300); do [ -e '{}' ] && break; sleep 0.1; done]] }})\n",
         go.display()
     )
 }

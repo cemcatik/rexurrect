@@ -330,13 +330,22 @@ mkdir -p ~/.config/rex &&
 ```
 
 The line reads
-`os.execute([[REXURRECT_STATE_DIR='/Users/you/.local/state/rexurrect' '/Users/you/.cargo/bin/rexurrect' auto-restore]])`.
+
+```lua
+do local r = rex.exec({ [[/Users/you/.cargo/bin/rexurrect]], "auto-restore" }, { env = { REXURRECT_STATE_DIR = [[/Users/you/.local/state/rexurrect]] } }) if r then io.stderr:write(r.stderr) end end
+```
+
 The server runs it in its own environment, not your shell's: the Rex app starts its server with
 a bare `PATH` and no `XDG_*` variables. So the line names `rexurrect` by its full path, and
 pins the state directory as it was resolved when you printed it (see
 [Where state lives](#where-state-lives)), so auto-restore uses the same snapshots as your shells
 and their recorder. Print the line again, replacing the old one, after moving `rexurrect` or
 changing `REXURRECT_STATE_DIR` or `XDG_STATE_HOME`.
+
+**If your `init.lua` has an `os.execute(...)` line** that runs `rexurrect auto-restore`, the
+line `--print-hook` printed before Rex build 1203, replace it with the line it prints now. Rex
+1203 made `os.execute` an error, so the server stops running `init.lua` at that line: nothing is
+restored, and nothing after it in `init.lua` runs either.
 
 **To turn it off**, delete that line. `autosave uninstall` reminds you to.
 
@@ -358,7 +367,9 @@ until `init.lua` has finished, and carries on in the background:
   which server it restored into and what it created and skipped, that there was nothing to do,
   or why it gave up, plus a line for each session that failed. If the server isn't ready within
   60 seconds, it gives up and logs that. Set `REXURRECT_READY_TIMEOUT` (seconds) in the
-  server's environment, or in the line, to wait longer.
+  server's environment, or in the line's `env`, to wait longer. A failure before it carries on
+  in the background (a `REXURRECT_READY_TIMEOUT` that isn't a number, say) goes to the server's
+  own log too.
 - The Rex app may create a session of its own when it finds the server empty. Auto-restore
   leaves it alone, and while it's untouched `save` never saves it.
 
