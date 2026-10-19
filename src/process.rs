@@ -9,35 +9,25 @@ use crate::error::{Context, Error, Result};
 /// A process's full command line: its arguments joined by spaces, with any
 /// quoting lost. `None` if the process has already exited.
 pub fn command_line(pid: u32) -> Result<Option<String>> {
-    ps(pid, &["-ww", "-o", "args="])
+    ps(&["-ww", "-o", "args=", "-p", &pid.to_string()])
 }
 
 /// A process's parent and the path of its executable. `None` if the process
 /// has already exited.
 pub fn parent_and_executable(pid: u32) -> Result<Option<(u32, PathBuf)>> {
-    let line = ps(pid, &["-o", "ppid=,comm="])?;
+    let line = ps(&["-o", "ppid=,comm=", "-p", &pid.to_string()])?;
     Ok(line.as_deref().and_then(pid_and_executable))
 }
 
 /// The pid and the path of the executable of every process this user runs.
 /// Never another user's: whoever owns a process can replace its executable.
 pub fn own_executables() -> Result<Vec<(u32, PathBuf)>> {
-    let out = Command::new("ps")
-        .args(["-ax", "-o", "uid=,pid=,comm="])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .with_context(|| "running ps")?;
-    if !out.status.success() {
-        return Err(Error::new(format!(
-            "`ps -ax` failed ({}) listing processes",
-            out.status
-        )));
-    }
+    let listing = ps(&["-ax", "-o", "uid=,pid=,comm="])?
+        .ok_or_else(|| Error::new("`ps -ax` failed listing processes"))?;
     // `ps`'s `uid` is the effective one. SAFETY: geteuid can't fail and has
     // no preconditions.
     let uid = unsafe { libc::geteuid() };
-    Ok(executables_of(uid, &String::from_utf8_lossy(&out.stdout)))
+    Ok(executables_of(uid, &listing))
 }
 
 /// The processes `uid` runs, from `ps`'s `uid=,pid=,comm=` listing.
@@ -52,7 +42,8 @@ fn executables_of(uid: u32, listing: &str) -> Vec<(u32, PathBuf)> {
         .collect()
 }
 
-/// A pid, then the path of an executable, as `ps` prints `<pid>=,comm=`.
+/// A process ID (a process's own or its parent's), then the path of an
+/// executable, as `ps -o pid=,comm=` or `ps -o ppid=,comm=` prints them.
 /// `comm` comes last and may contain spaces (`/Applications/Rex Beta.app/...`).
 fn pid_and_executable(line: &str) -> Option<(u32, PathBuf)> {
     let (pid, executable) = line.trim().split_once(char::is_whitespace)?;
@@ -98,11 +89,11 @@ pub fn stop_passing_on_open_files() {
     }
 }
 
-/// `ps <format> -p <pid>`, trimmed; `None` if there's no such process.
-fn ps(pid: u32, format: &[&str]) -> Result<Option<String>> {
+/// `ps <args>`'s output, trimmed; `None` if it failed or printed nothing
+/// (with `-p <pid>`: there's no such process).
+fn ps(args: &[&str]) -> Result<Option<String>> {
     let out = Command::new("ps")
-        .args(format)
-        .args(["-p", &pid.to_string()])
+        .args(args)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()

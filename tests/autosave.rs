@@ -203,7 +203,7 @@ impl Agent {
             .args(&args[1..])
             .env_clear()
             .env("HOME", env.mkdir("launchd-home"))
-            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .env("PATH", SYSTEM_PATH)
             .env(
                 "XDG_RUNTIME_DIR",
                 &harness[std::ffi::OsStr::new("XDG_RUNTIME_DIR")],
@@ -381,10 +381,7 @@ fn an_autosave_while_rex_is_not_running_logs_the_failure_and_starts_no_server() 
 
     let job = launchd.the_agent().run_as_launchd(&env);
 
-    if let Some(pid) = env.server_pid_at(&endpoint) {
-        let _ = Command::new("kill").arg(pid.to_string()).status();
-        panic!("the autosave started a Rex server (pid {pid}) at {endpoint}");
-    }
+    env.assert_no_server_started_at(&endpoint, "the autosave");
     job.assert_failure();
     let entries = env.log_entries();
     assert_eq!(entries.len(), 1, "{entries:#?}");
@@ -523,9 +520,7 @@ fn the_agent_gets_only_the_system_path_whether_or_not_rex_is_on_path_at_install(
 
         let agent = launchd.the_agent();
         assert!(
-            agent
-                .environment()
-                .contains(&("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")),
+            agent.environment().contains(&("PATH", SYSTEM_PATH)),
             "{agent:?}"
         );
     }

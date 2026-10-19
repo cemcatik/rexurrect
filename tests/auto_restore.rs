@@ -40,6 +40,26 @@ fn wait_for_auto_restores(env: &TestEnv, n: usize) -> Vec<String> {
     })
 }
 
+/// Rex runs commands from init.lua only through `rex.exec`, which takes an
+/// argv list: `os.execute` stops init.lua.
+#[test]
+fn the_printed_hook_is_one_line_that_runs_rexurrect_without_a_shell() {
+    let env = TestEnv::new();
+
+    let printed = hook(&env);
+
+    assert_eq!(
+        printed,
+        format!(
+            "do local r = rex.exec({{ [[{bin}]], \"auto-restore\" }}, \
+             {{ env = {{ REXURRECT_STATE_DIR = [[{state}]] }} }}) \
+             if r then io.stderr:write(r.stderr) end end\n",
+            bin = common::rexurrect::bin(),
+            state = env.state_dir().display(),
+        )
+    );
+}
+
 #[test]
 fn a_server_whose_init_lua_has_the_hook_restores_the_latest_snapshot_when_it_starts() {
     let env = TestEnv::new();

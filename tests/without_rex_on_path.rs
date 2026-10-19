@@ -10,9 +10,6 @@ mod common;
 
 use common::*;
 
-/// The system directories, and no `rex`: launchd's `PATH` for its agents.
-const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
-
 #[test]
 fn save_and_restore_reach_a_running_server_without_rex_on_path() {
     let env = TestEnv::new();
@@ -37,7 +34,10 @@ fn save_and_restore_reach_a_running_server_without_rex_on_path() {
 #[test]
 fn a_save_with_no_server_at_the_endpoint_logs_the_failure_naming_it_and_starts_no_server() {
     let env = TestEnv::new();
-    let endpoint = env.start_server().endpoint().to_string(); // It stops here.
+    let endpoint = {
+        let server = env.start_server();
+        server.endpoint().to_string()
+    }; // The server stops here.
     // A temp HOME too: if autostart were ever on, rex's default server would
     // start in there rather than anywhere real.
     let home = env.mkdir("home");
@@ -49,12 +49,7 @@ fn a_save_with_no_server_at_the_endpoint_logs_the_failure_naming_it_and_starts_n
         .arg("save")
         .run();
 
-    if let Some(pid) = env.server_pid_at(&endpoint) {
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .status();
-        panic!("the save started a Rex server (pid {pid}) at {endpoint}");
-    }
+    env.assert_no_server_started_at(&endpoint, "the save");
     out.assert_failure();
     let entries = env.log_entries();
     assert_eq!(entries.len(), 1, "{entries:#?}");

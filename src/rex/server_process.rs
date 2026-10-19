@@ -67,6 +67,17 @@ pub fn find_starter() -> Result<Starter> {
     Ok(Starter::NotRex)
 }
 
+/// The `rex` to call `endpoint` through when there's none on `PATH`: the
+/// one a Rex server of this user's runs (see [`choose`]). `None` if there's
+/// no such server.
+pub fn rex_for(endpoint: &str) -> Result<Option<PathBuf>> {
+    let mut servers = ServerProcess::running()?;
+    // A bare `rex`, from a server whose executable `ps` didn't give in full,
+    // is the very one that isn't on `PATH`.
+    servers.retain(|server| server.program.is_absolute());
+    Ok(choose(&servers, endpoint).map(|server| server.program.clone()))
+}
+
 /// The server whose `rex` to run to call `endpoint`, from `servers`: the one
 /// whose command line says it listens there, else any.
 ///
@@ -150,8 +161,7 @@ impl ServerProcess {
         let mut endpoints: Vec<String> = Vec::new();
         endpoints.extend(self.listen.clone());
         endpoints.extend(var(SERVER_VAR).and_then(|v| v.into_string().ok()));
-        let xdg_runtime_dir = var("XDG_RUNTIME_DIR").map(PathBuf::from);
-        endpoints.push(super::default_endpoint(xdg_runtime_dir.as_deref(), home));
+        endpoints.push(super::default_endpoint(home));
         let mut unique = Vec::new();
         for endpoint in endpoints {
             if !unique.contains(&endpoint) {
