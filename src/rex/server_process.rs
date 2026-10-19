@@ -25,7 +25,7 @@ const MAX_ANCESTORS: usize = 32;
 pub struct ServerProcess {
     pub pid: u32,
     /// The `rex` CLI the server runs as. Calls to the server go through it:
-    /// it's the same version as the server, and it's there even when `rex`
+    /// it's the server's own build, and it's there even when `rex`
     /// isn't on `PATH` (the Rex app starts its server with a bare `PATH`).
     pub program: PathBuf,
     /// The endpoint on its command line (`--listen`), if any.
@@ -82,10 +82,11 @@ pub fn rex_for(endpoint: &str) -> Result<Option<PathBuf>> {
 /// whose command line says it listens there, else any.
 ///
 /// The call names `endpoint` with `-S` either way, so any working `rex`
-/// reaches the right server; the endpoint's own keeps the CLI the server's
-/// version, which only differs while two Rex builds run at once. There's no
-/// `server.status` check of which server answers there (ADR-0003).
-pub fn choose<'a>(servers: &'a [ServerProcess], endpoint: &str) -> Option<&'a ServerProcess> {
+/// reaches the right server; preferring the endpoint's own keeps the CLI the
+/// same build as the server, which only matters while two builds run at
+/// once. There's no `server.status` check of which server answers there
+/// (ADR-0003).
+fn choose<'a>(servers: &'a [ServerProcess], endpoint: &str) -> Option<&'a ServerProcess> {
     servers
         .iter()
         .find(|server| server.listen.as_deref() == Some(endpoint))
@@ -98,7 +99,7 @@ fn is_rex(executable: &Path) -> bool {
 
 impl ServerProcess {
     /// Every Rex server this user runs.
-    pub fn running() -> Result<Vec<ServerProcess>> {
+    fn running() -> Result<Vec<ServerProcess>> {
         let mut servers = Vec::new();
         for (pid, executable) in process::own_executables()? {
             if !is_rex(&executable) {

@@ -24,8 +24,8 @@ pub fn parent_and_executable(pid: u32) -> Result<Option<(u32, PathBuf)>> {
 pub fn own_executables() -> Result<Vec<(u32, PathBuf)>> {
     let listing = ps(&["-ax", "-o", "uid=,pid=,comm="])?
         .ok_or_else(|| Error::new("`ps -ax` failed listing processes"))?;
-    // `ps`'s `uid` is the effective one. SAFETY: geteuid can't fail and has
-    // no preconditions.
+    // `ps`'s `uid` is the effective one.
+    // SAFETY: geteuid can't fail and has no preconditions.
     let uid = unsafe { libc::geteuid() };
     Ok(executables_of(uid, &listing))
 }

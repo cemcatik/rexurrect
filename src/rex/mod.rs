@@ -5,9 +5,10 @@
 //!
 //! - `--autostart=false` always: otherwise a save that runs while Rex is quit
 //!   would start an empty server.
-//! - `-S` explicitly whenever there's an endpoint: `REX_SERVER`, or one given
-//!   ([`Rex::at`]). If that server isn't running, a bare `rex` silently falls
-//!   back to its default endpoint, which may be a different (real) server.
+//! - `-S` explicitly whenever there's an endpoint: `REX_SERVER`, one given
+//!   ([`Rex::at`]), or rex's default when the `rex` is a running server's.
+//!   If that server isn't running, a bare `rex` silently falls back to its
+//!   default endpoint, which may be a different (real) server.
 //!
 //! The `rex` it runs is the one on `PATH`, else the one a running Rex server
 //! runs: Rex has no stable path to its CLI (ADR-0003).
@@ -199,26 +200,27 @@ impl Rex {
     /// either.
     pub fn from_env() -> Result<Rex> {
         let server = settings::env_non_empty(SERVER_VAR);
-        let program = match rex_on_path() {
-            Some(rex) => rex,
-            None => {
-                let endpoint = match &server {
-                    Some(server) => server.to_string_lossy().into_owned(),
-                    None => default_endpoint(&account::home()?),
-                };
-                server_process::rex_for(&endpoint)?.ok_or_else(|| {
-                    Error::new(format!(
-                        "the Rex server at {endpoint} isn't running: no Rex server is running, \
-                         and there's no `rex` on PATH"
-                    ))
-                })?
-            }
+        if let Some(program) = rex_on_path() {
+            return Ok(Rex {
+                program,
+                server,
+                timeout: None,
+            });
+        }
+        // Named with `-S` even when it's rex's default, so the borrowed `rex`
+        // never decides which server is called (ADR-0003).
+        let endpoint = match server {
+            Some(server) => server,
+            None => default_endpoint(&account::home()?).into(),
         };
-        Ok(Rex {
-            program,
-            server,
-            timeout: None,
-        })
+        let shown = endpoint.to_string_lossy();
+        let program = server_process::rex_for(&shown)?.ok_or_else(|| {
+            Error::new(format!(
+                "couldn't reach the Rex server at {shown}: there's no `rex` on PATH, \
+                 and no running Rex server of yours to borrow one from"
+            ))
+        })?;
+        Ok(Rex::at(program, endpoint))
     }
 
     /// The server at `endpoint`, reached through the `rex` CLI at `program`.
