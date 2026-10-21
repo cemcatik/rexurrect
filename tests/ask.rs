@@ -50,6 +50,21 @@ fn ask_without_a_terminal_chooses_nothing() {
 }
 
 #[test]
+fn ask_never_restores_without_asking_even_with_asking_off() {
+    let env = TestEnv::new();
+    env.saved_on_an_earlier_server(&["zz-proj"]);
+    let after = env.start_server();
+
+    env.rexurrect(&after)
+        .env_remove(ASK)
+        .arg("ask")
+        .run()
+        .assert_success();
+
+    assert!(after.sorted_labels().is_empty());
+}
+
+#[test]
 fn fresh_declines_the_restore_so_saves_save_what_is_live() {
     let env = TestEnv::new();
     env.saved_on_an_earlier_server(&["zz-proj"]);

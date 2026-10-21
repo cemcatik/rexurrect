@@ -56,7 +56,22 @@ pub fn awaiting_choice(
     lock: &RestoreLock,
     server: &ServerStatus,
 ) -> Result<Option<RestoreReport>> {
-    if !enabled() || lock.is_restored(&server.instance_id)? {
+    if !enabled() {
+        return Ok(None);
+    }
+    offer(rex, state, lock, server)
+}
+
+/// What restoring into `server`'s instance would create, as a dry run, if
+/// nothing has restored into it and that's at least one session. Whether
+/// asking is on doesn't matter: `ask` never restores without asking.
+fn offer(
+    rex: &Rex,
+    state: &StateDir,
+    lock: &RestoreLock,
+    server: &ServerStatus,
+) -> Result<Option<RestoreReport>> {
+    if lock.is_restored(&server.instance_id)? {
         return Ok(None);
     }
     let dry_run = RestoreOptions {
@@ -86,16 +101,11 @@ pub fn run() -> Result<ExitCode> {
     let (server, offer) = {
         let lock = RestoreLock::acquire(&state)?;
         let server = rex.server_status()?;
-        let offer = awaiting_choice(&rex, &state, &lock, &server)?;
+        let offer = offer(&rex, &state, &lock, &server)?;
         if offer.is_none() && !lock.is_restored(&server.instance_id)? {
-            // Nothing to restore (or asking is off): restore as usual, which
-            // records the instance and creates whatever there is.
-            let report =
-                restore::restore(&rex, &state, &lock, &server, &RestoreOptions::default())?;
-            if report.created_a_session() {
-                return Ok(report.finish(&state, "ask", &mut std::io::stdout().lock()));
-            }
-            return Ok(ExitCode::SUCCESS);
+            // Nothing to restore: record the instance, as a restore that
+            // creates nothing would.
+            lock.record_restored(&server.instance_id)?;
         }
         (server, offer)
     };
@@ -153,7 +163,8 @@ pub fn run() -> Result<ExitCode> {
             let _ = writeln!(
                 out,
                 "rexurrect: deciding later. Nothing restores and nothing is saved until you \
-                 choose: a new block asks again, or run `rexurrect restore` or `rexurrect fresh`."
+                 choose: a new block asks again, or run `rexurrect ask`, `rexurrect restore` or \
+                 `rexurrect fresh`."
             );
             Ok(ExitCode::SUCCESS)
         }
