@@ -3,6 +3,7 @@
 
 mod account;
 mod app_session;
+mod ask;
 mod auto_restore;
 mod autosave;
 mod capture;
@@ -50,6 +51,8 @@ fn main() -> ExitCode {
         Command::Save => logging_failure("save", save::run()),
         Command::Restore(options) => logging_failure("restore", restore::run(&options)),
         Command::List => list::run(),
+        Command::Ask => logging_failure("ask", ask::run()),
+        Command::Fresh => logging_failure("fresh", ask::run_fresh()),
         Command::Autosave(command) => autosave::run(&command),
         Command::AutoRestore(options) => {
             logging_failure("auto-restore", auto_restore::run(&options))

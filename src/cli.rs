@@ -16,6 +16,8 @@ pub enum Command {
     Save,
     Restore(RestoreOptions),
     List,
+    Ask,
+    Fresh,
     Autosave(AutosaveCommand),
     AutoRestore(AutoRestoreOptions),
     Help,
@@ -31,6 +33,11 @@ Commands:
   save      Save every session on the Rex server to a new snapshot
   restore   Recreate the latest snapshot's sessions that aren't live
   list      List the snapshots, newest first, with their session labels
+  ask       If this server instance is waiting for a choice (REXURRECT_ASK),
+            ask at the terminal: restore the latest snapshot, start fresh,
+            or decide later
+  fresh     Start fresh on this server instance: never restore into it,
+            and let saves save what's live
   autosave install
             Run `save` every 15 minutes in the background (a launchd agent)
   autosave uninstall
@@ -70,6 +77,9 @@ Environment:
                            keeps no scrollback for (default: claude)
   REXURRECT_READY_TIMEOUT  How long auto-restore waits for the Rex server to
                            be ready, in seconds (default: 60)
+  REXURRECT_ASK            Set (not 0): never restore into a new server
+                           instance without asking; `ask` asks, and save and
+                           auto-restore leave the instance alone until then
 ";
 
 #[derive(Debug)]
@@ -93,6 +103,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, UsageE
         "save" => no_options(&mut args, "save").map(|()| Command::Save),
         "restore" => parse_restore(&mut args).map(Command::Restore),
         "list" => no_options(&mut args, "list").map(|()| Command::List),
+        "ask" => no_options(&mut args, "ask").map(|()| Command::Ask),
+        "fresh" => no_options(&mut args, "fresh").map(|()| Command::Fresh),
         "autosave" => parse_autosave(&mut args).map(Command::Autosave),
         "auto-restore" => parse_auto_restore(&mut args).map(Command::AutoRestore),
         "help" => Ok(Command::Help),

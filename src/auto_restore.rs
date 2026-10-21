@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use crate::account;
 use crate::app_session::{self, Watched};
+use crate::ask;
 use crate::error::{Context, Error, Result};
 use crate::instance::RestoreLock;
 use crate::log::{self, Log};
@@ -167,6 +168,17 @@ fn restore_when_ready(pid: u32) -> Result<ExitCode> {
     // Read again under the lock: the instance to restore into is whichever
     // the server is running once it's this run's turn.
     let server = ready.rex.server_status()?;
+    if ask::awaiting_choice(&ready.rex, &state, &lock, &server)?.is_some() {
+        let message = format!(
+            "auto-restore into {} (server instance {}): left to `rexurrect ask` ({} is set)",
+            ready.endpoint,
+            server.instance_id,
+            ask::ASK_VAR
+        );
+        println!("{message}");
+        Log::new(&state).append(&message)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let restored = restore::restore_unrestored_instance(&ready.rex, &state, &lock, &server)?;
     // The instance is recorded as restored by now. A save or restore that
     // starts while this run looks for the app session needn't wait for it.

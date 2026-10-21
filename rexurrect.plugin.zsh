@@ -128,4 +128,15 @@ _rexurrect_record() {
   zmodload -F zsh/files b:zf_mkdir b:zf_mv 2>/dev/null
   autoload -Uz add-zsh-hook
   add-zsh-hook preexec _rexurrect_record
+  # With REXURRECT_ASK set, the first prompt asks whether to restore after
+  # a server restart (`rexurrect ask`, silent when there's nothing to ask).
+  [[ -o interactive && -n $REXURRECT_ASK && $REXURRECT_ASK != 0 ]] &&
+    add-zsh-hook precmd _rexurrect_ask
+}
+
+# Runs once, at the block's first prompt, after the rest of the shell's
+# startup has printed.
+_rexurrect_ask() {
+  add-zsh-hook -d precmd _rexurrect_ask
+  (( $+commands[rexurrect] )) && rexurrect ask
 }
