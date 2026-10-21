@@ -309,7 +309,7 @@ finds it when you run it, and prints the server and state directory it chose:
   up on another one;
 - **the state directory**, resolved as above, so autosave shares snapshots with your manual
   runs and the recorder;
-- `REXURRECT_KEEP` and `REXURRECT_NO_SCROLLBACK`, if set.
+- `REXURRECT_KEEP`, `REXURRECT_NO_SCROLLBACK` and `REXURRECT_ASK`, if set.
 
 Run `autosave install` again after changing any of these, or after moving `rexurrect`.
 
@@ -411,6 +411,42 @@ restored into, not just the last.
 If auto-restore can't tell which endpoint is the server's (one containing a space that isn't
 percent-encoded; Rex's own endpoints are encoded), it gives up and logs that rather than restore
 into any other server.
+
+## Asking before restoring
+
+To choose after each restart between getting your sessions back and starting fresh, rather than
+having them come back by themselves, set `REXURRECT_ASK` in `~/.zshrc`, before loading the
+recorder, and install (or reinstall) autosave from a new shell so it picks the setting up:
+
+```sh
+export REXURRECT_ASK=1
+```
+
+Then nothing restores into a restarted server until you choose. The first prompt in a new block
+asks:
+
+```text
+rexurrect: the Rex server restarted. Snapshot 20261021T161529.241014Z (2026-10-21 16:15:29 UTC) has 2 session(s) that aren't live:
+  api, docs
+Restore them? [R]estore / [f]resh start / [l]ater:
+```
+
+- **Restore** (Enter, `r`, `y`) restores that snapshot, as `restore` does.
+- **Fresh start** (`f`, `n`) restores nothing into this server instance, ever, and saves go back
+  to saving what's live. The snapshot you declined stays in `list` until retention removes it,
+  so `rexurrect restore --snapshot <id>` still brings it back for a while.
+- **Later** (anything else, or Ctrl-D) changes nothing. Until you choose, `save` and autosave
+  save nothing (`nothing saved: this server instance is waiting ...`), so the snapshot on offer
+  stays the latest, and the restore `save` runs first and auto-restore both leave the server
+  alone. Each new block asks again; `rexurrect ask`, `rexurrect restore` and `rexurrect fresh`
+  choose from any shell.
+
+Only one block asks at a time, and no lock is held while it waits, so autosave never queues up
+behind an unanswered prompt. A server with nothing to restore (no snapshot yet, or every saved
+session still live) never asks. `rexurrect ask` never restores without asking, with or without
+`REXURRECT_ASK`, and does nothing without a terminal. With asking on, the auto-restore line in
+`init.lua` isn't needed: it only logs that it left the choice to `ask`. See
+[ADR-0005](docs/adr/0005-ask-before-restoring.md).
 
 ## Upgrading from rex-resurrect
 
