@@ -13,8 +13,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::shells;
-
 /// The terminal shell block flavor, today the only one Rex has.
 pub const SHELL_FLAVOR: &str = "com.superlogical.terminal.shell";
 
@@ -230,11 +228,11 @@ impl TerminalProcess {
     /// directly), so a foreground process with an ancestor other than `login`
     /// isn't the block's shell. Without `ancestors`, the foreground process
     /// is the block's first, and that's its shell only if it is one (see
-    /// [`shells::is_shell`]): a command block has no shell, and its command
-    /// is its foreground program.
+    /// [`ProcessInfo::is_shell`]): a command block has no shell, and its
+    /// command is its foreground program.
     pub fn foreground_program(&self) -> Option<&ProcessInfo> {
         let is_program = if self.ancestors.is_empty() {
-            !shells::is_shell(&self.foreground)
+            !self.foreground.is_shell()
         } else {
             self.ancestors.iter().any(|ancestor| ancestor.name != LOGIN)
         };
@@ -244,6 +242,12 @@ impl TerminalProcess {
 
 /// The process Rex starts a block's login shell through.
 const LOGIN: &str = "login";
+
+/// The shells recognized by name. A shell missing here, as a block's first
+/// process, counts as that block's foreground program.
+const SHELL_NAMES: &[&str] = &[
+    "zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh", "nu",
+];
 
 #[derive(Debug, Deserialize)]
 pub struct ProcessInfo {
@@ -275,6 +279,16 @@ impl ProcessInfo {
         std::iter::once(self.name.as_str())
             .chain(invoked)
             .chain(argv0)
+    }
+
+    /// Whether it's a shell, by any name it goes by. A login shell's `argv0`
+    /// (`-zsh`) counts without its `-`. Matching shells rather than programs
+    /// is what makes this reliable: Claude Code's executable is named for its
+    /// version (`2.1.309`), and only its `argv0` is `claude`.
+    pub fn is_shell(&self) -> bool {
+        self.names()
+            .map(|name| name.strip_prefix('-').unwrap_or(name))
+            .any(|name| SHELL_NAMES.contains(&name))
     }
 }
 
