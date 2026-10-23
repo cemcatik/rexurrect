@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::shells::Shells;
+use crate::shells;
 
 /// The terminal shell block flavor, today the only one Rex has.
 pub const SHELL_FLAVOR: &str = "com.superlogical.terminal.shell";
@@ -229,12 +229,12 @@ impl TerminalProcess {
     /// block's first process (`login`, or the shell itself when Rex starts it
     /// directly), so a foreground process with an ancestor other than `login`
     /// isn't the block's shell. Without `ancestors`, the foreground process
-    /// is the block's first, and that's its shell only if it is one (by
-    /// `shells`): a command block has no shell, and its command is its
-    /// foreground program.
-    pub fn foreground_program(&self, shells: &Shells) -> Option<&ProcessInfo> {
+    /// is the block's first, and that's its shell only if it is one (see
+    /// [`shells::is_shell`]): a command block has no shell, and its command
+    /// is its foreground program.
+    pub fn foreground_program(&self) -> Option<&ProcessInfo> {
         let is_program = if self.ancestors.is_empty() {
-            !shells.is_shell(&self.foreground)
+            !shells::is_shell(&self.foreground)
         } else {
             self.ancestors.iter().any(|ancestor| ancestor.name != LOGIN)
         };
@@ -380,8 +380,6 @@ pub struct CreatedWindow {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
-
     use super::*;
 
     /// A process running the executable `name`, started as `argv0`.
@@ -404,47 +402,35 @@ mod tests {
         }
     }
 
-    fn is_program(foreground: ProcessInfo, shell_var: Option<&str>) -> bool {
-        let shells = Shells::new(shell_var.map(OsStr::new));
-        first_process(foreground)
-            .foreground_program(&shells)
-            .is_some()
+    fn is_program(foreground: ProcessInfo) -> bool {
+        first_process(foreground).foreground_program().is_some()
     }
 
     #[test]
     fn a_first_process_that_is_a_known_shell_is_the_blocks_own_shell() {
-        assert!(!is_program(process_info("zsh", "zsh"), None));
-        assert!(!is_program(process_info("bash", "/bin/bash"), None));
+        assert!(!is_program(process_info("zsh", "zsh")));
+        assert!(!is_program(process_info("bash", "/bin/bash")));
     }
 
     #[test]
     fn a_login_shells_dash_prefixed_argv0_still_names_a_shell() {
         // The executable's name differs, so only `argv0` can match.
-        assert!(!is_program(process_info("zsh-5.9", "-zsh"), None));
-    }
-
-    #[test]
-    fn a_first_process_named_like_the_users_shell_is_the_blocks_own_shell() {
-        let elvish = || process_info("elvish", "elvish");
-        assert!(!is_program(elvish(), Some("/opt/homebrew/bin/elvish")));
-        assert!(is_program(elvish(), None), "not a shell without $SHELL");
-        assert!(is_program(elvish(), Some("")), "nor with an empty one");
+        assert!(!is_program(process_info("zsh-5.9", "-zsh")));
     }
 
     #[test]
     fn a_first_process_that_is_not_a_shell_is_the_blocks_foreground_program() {
-        assert!(is_program(process_info("tail", "tail"), Some("/bin/zsh")));
+        assert!(is_program(process_info("tail", "tail")));
         // Claude Code: its executable is named for its version.
-        assert!(is_program(process_info("2.1.309", "claude"), None));
+        assert!(is_program(process_info("2.1.309", "claude")));
     }
 
     #[test]
     fn with_ancestors_only_one_other_than_login_makes_the_foreground_a_program() {
-        let shells = Shells::new(None);
         let mut process = first_process(process_info("zsh", "-zsh"));
         process.ancestors = vec![process_info(LOGIN, LOGIN)];
-        assert!(process.foreground_program(&shells).is_none());
+        assert!(process.foreground_program().is_none());
         process.ancestors.insert(0, process_info("zsh", "-zsh"));
-        assert!(process.foreground_program(&shells).is_some());
+        assert!(process.foreground_program().is_some());
     }
 }

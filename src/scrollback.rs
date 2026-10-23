@@ -37,7 +37,6 @@ use crate::account::Account;
 use crate::error::{Error, Result};
 use crate::rex::api::{FormatArgs, TerminalOptions, TerminalProcess};
 use crate::rex::{BlockRef, Rex, RexError};
-use crate::shells::Shells;
 use crate::snapshot::SavedBlock;
 use crate::state::{self, StateDir};
 use crate::timestamp::Timestamp;
@@ -76,9 +75,9 @@ impl NoScrollbackPrograms {
     /// Whether the block whose terminal `process` method answered `process`
     /// is running one of these programs, by any name the program goes by
     /// (the name it was run by, or its executable's), whether its shell runs
-    /// it or it's a command block's command (see `shells`).
-    pub fn running_in(&self, process: &TerminalProcess, shells: &Shells) -> bool {
-        process.foreground_program(shells).is_some_and(|program| {
+    /// it or it's a command block's command.
+    pub fn running_in(&self, process: &TerminalProcess) -> bool {
+        process.foreground_program().is_some_and(|program| {
             program
                 .names()
                 .any(|name| self.names.iter().any(|listed| listed == name))
@@ -392,6 +391,6 @@ mod tests {
         let listed = NoScrollbackPrograms {
             names: vec!["claude".to_string()],
         };
-        assert!(listed.running_in(&claude, &Shells::new(None)));
+        assert!(listed.running_in(&claude));
     }
 }

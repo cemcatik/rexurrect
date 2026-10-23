@@ -17,7 +17,6 @@ use crate::rex::{BlockRef, Rex, RexError};
 use crate::scrollback::{
     NoScrollbackPrograms, SavedScrollback, ScrollbackSource, ScrollbackStore, SnapshotScrollback,
 };
-use crate::shells::Shells;
 use crate::snapshot::{SavedBlock, SavedLayout, SavedSession, SavedSplit, SavedWindow};
 use crate::startup::Starting;
 use crate::state::StateDir;
@@ -28,8 +27,7 @@ use crate::workdir;
 /// local server's host, the home directory), what it knows about them on
 /// this machine (the recorder files, the sessions and blocks in their
 /// startup window, the default last commands), the programs whose blocks
-/// get no scrollback, the shells it tells a block's own shell by, and where
-/// it saves scrollback.
+/// get no scrollback, and where it saves scrollback.
 pub struct CaptureContext {
     /// The local server's host. A block with a different `host_id` is a
     /// remote block.
@@ -48,9 +46,6 @@ pub struct CaptureContext {
     pub scrollback: SnapshotScrollback,
     /// The programs whose blocks get no scrollback.
     pub no_scrollback: NoScrollbackPrograms,
-    /// What counts as a block's own shell rather than its foreground
-    /// program, when that's its first process. Read once per save.
-    pub shells: Shells,
 }
 
 impl CaptureContext {
@@ -71,7 +66,6 @@ impl CaptureContext {
             defaults: DefaultCommands::load(state)?,
             scrollback: ScrollbackStore::new(state).for_snapshot(taken_at),
             no_scrollback,
-            shells: Shells::from_env(),
         })
     }
 
@@ -330,10 +324,7 @@ impl Capture<'_> {
             last_command: self.last_command(block_id, recorded, &process)?,
             scrollback: None,
         };
-        let has_scrollback = !self
-            .context
-            .no_scrollback
-            .running_in(&process, &self.context.shells);
+        let has_scrollback = !self.context.no_scrollback.running_in(&process);
         self.scrollback.push(has_scrollback.then(|| {
             ScrollbackSource::Terminal(BlockRef {
                 session_id: session_id.clone(),
@@ -362,16 +353,14 @@ impl Capture<'_> {
         Ok(match recorded {
             Recorded::LastCommand(command) => Some(command),
             Recorded::NoLastCommand => None,
-            Recorded::Nothing => {
-                match foreground::foreground_command(process, &self.context.shells)? {
-                    Some(program) => {
-                        self.programs_seen
-                            .push((block_id.to_string(), program.clone()));
-                        Some(program)
-                    }
-                    None => self.context.defaults.get(block_id).map(str::to_string),
+            Recorded::Nothing => match foreground::foreground_command(process)? {
+                Some(program) => {
+                    self.programs_seen
+                        .push((block_id.to_string(), program.clone()));
+                    Some(program)
                 }
-            }
+                None => self.context.defaults.get(block_id).map(str::to_string),
+            },
         })
     }
 
