@@ -5,6 +5,7 @@
 use crate::error::Result;
 use crate::process;
 use crate::rex::api::TerminalProcess;
+use crate::shells::Shells;
 
 /// rexurrect's own executable name. A save run from a block is that block's
 /// foreground program while it saves, and never what the block was doing.
@@ -12,12 +13,12 @@ const REXURRECT: &str = "rexurrect";
 
 /// The command line of the program in the foreground of the block whose
 /// terminal `process` method answered `process`, as restore would type it
-/// (see [`zsh_line`]), or `None` while the block's own shell, or
-/// rexurrect, is in the foreground, or if the program's arguments can't be
+/// (see [`zsh_line`]), or `None` while the block's own shell (by `shells`),
+/// or rexurrect, is in the foreground, or if the program's arguments can't be
 /// read or typed. The arguments come from the kernel: the terminal `process`
 /// method reports none.
-pub fn foreground_command(process: &TerminalProcess) -> Result<Option<String>> {
-    match process.foreground_program() {
+pub fn foreground_command(process: &TerminalProcess, shells: &Shells) -> Result<Option<String>> {
+    match process.foreground_program(shells) {
         Some(program) if !program.names().any(|name| name == REXURRECT) => {
             Ok(process::arguments(program.pid)?.and_then(|arguments| zsh_line(&arguments)))
         }
@@ -67,6 +68,7 @@ fn is_plain(argument: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rex::api::ProcessInfo;
 
     fn line(arguments: &[&str]) -> Option<String> {
         zsh_line(&arguments.iter().map(|a| a.to_string()).collect::<Vec<_>>())
@@ -93,6 +95,26 @@ mod tests {
         assert_eq!(
             line(&["echo", "it's", "*", "$HOME", "", "=vim"]).as_deref(),
             Some(r"echo 'it'\''s' '*' '$HOME' '' '=vim'")
+        );
+    }
+
+    /// Its arguments are never read: `pid` 1 isn't rexurrect.
+    #[test]
+    fn rexurrect_as_a_blocks_first_process_is_not_its_last_command() {
+        let process = TerminalProcess {
+            foreground: ProcessInfo {
+                pid: 1,
+                name: REXURRECT.to_string(),
+                invoked_path: None,
+                argv0: Some(REXURRECT.to_string()),
+                cwd: None,
+            },
+            ancestors: Vec::new(),
+            home: "/home/u".into(),
+        };
+        assert_eq!(
+            foreground_command(&process, &Shells::new(None)).unwrap(),
+            None
         );
     }
 
