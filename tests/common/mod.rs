@@ -11,7 +11,11 @@
 //!   view, write, pwd, capture, kill, rename). Stopped on drop.
 //! - [`fixture`]: layouts to create (`window`, `hsplit`, `vsplit`, `shell`)
 //!   and [`Shape`], the comparable form of a layout Rex reports.
-//! - [`RexurrectCmd`]: one run of the binary with a scrubbed environment.
+//! - [`RexurrectCmd`]: one run of the binary with a scrubbed environment,
+//!   by its own path or, with [`RexurrectCmd::via`], another (a symlink in a
+//!   Homebrew-shaped prefix).
+//! - [`launchd`]: a stand-in launchd ([`launchd::FakeLaunchd`]) for the
+//!   tests that install the autosave agent, and the agent plists it holds.
 //! - [`files`]: the state directory's files as seen from outside (modes,
 //!   total size, whether a directory holds anything, their bytes to compare),
 //!   for privacy, retention and "wrote nothing" checks that don't depend on
@@ -44,6 +48,7 @@
 pub mod env;
 pub mod files;
 pub mod fixture;
+pub mod launchd;
 pub mod rexurrect;
 pub mod server;
 pub mod stub;
