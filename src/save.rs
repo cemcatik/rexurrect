@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use crate::ask;
 use crate::capture::{self, SessionWithScrollback};
 use crate::create;
 use crate::error::{Context, Error, Result};
@@ -71,6 +72,15 @@ pub fn run() -> Result<ExitCode> {
     // Read once, under the lock: restoring first and saving agree on the
     // server instance, and on which host is local.
     let server = rex.server_status()?;
+    // Asking is on and nobody has chosen yet: saving now would replace the
+    // snapshot on offer, and restoring first would choose for them.
+    if ask::awaiting_choice(&rex, &state, &lock, &server)?.is_some() {
+        println!(
+            "nothing saved: this server instance is waiting for you to choose between restoring \
+             and starting fresh (`rexurrect ask`); the latest snapshot is unchanged"
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     let mut status = ExitCode::SUCCESS;
     if let Some(report) = restore::restore_unrestored_instance(&rex, &state, &lock, &server)? {
         println!("restored first: this server instance hadn't been restored into yet");

@@ -7,6 +7,7 @@ use std::ffi::OsStr;
 use std::process::ExitCode;
 
 use crate::account;
+use crate::ask;
 use crate::error::{Context, Error, Result};
 use crate::log::Log;
 use crate::retention::{KEEP_VAR, Retention};
@@ -100,6 +101,9 @@ fn job_env(state: &StateDir) -> Result<BTreeMap<String, String>> {
     }
     if let Some(programs) = std::env::var_os(NO_SCROLLBACK_VAR) {
         env.insert(NO_SCROLLBACK_VAR.to_string(), utf8(&programs)?);
+    }
+    if let Some(ask) = settings::env_non_empty(ask::ASK_VAR) {
+        env.insert(ask::ASK_VAR.to_string(), utf8(&ask)?);
     }
     env.insert("PATH".to_string(), SYSTEM_PATH.to_string());
     Ok(env)

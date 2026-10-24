@@ -128,3 +128,10 @@ A restore that runs by itself once per server instance, as soon as the server is
 **App session**:
 A session the Rex app creates on its own when it finds the server with no sessions: an untouched session with a label Rex generated. Auto-restore closes one while it's still untouched.
 _Avoid_: extra session, empty session, default session
+
+**Waiting server instance**:
+With `REXURRECT_ASK` set, an unrestored server instance whose latest snapshot has a session to create. Nothing restores into it and save saves nothing from it until the user chooses: restore, or start fresh.
+_Avoid_: pending server, undecided instance
+
+**Starting fresh**:
+Declining the restore offered for a waiting server instance: it counts as restored into without anything being created, so saves save what's live.
