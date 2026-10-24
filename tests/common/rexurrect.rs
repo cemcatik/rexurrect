@@ -18,6 +18,7 @@ pub fn bin() -> &'static str {
 /// [`super::TestEnv::rexurrect`].
 #[must_use]
 pub struct RexurrectCmd {
+    program: PathBuf,
     args: Vec<OsString>,
     env: BTreeMap<OsString, OsString>,
     path_prepend: Vec<PathBuf>,
@@ -27,6 +28,7 @@ pub struct RexurrectCmd {
 impl RexurrectCmd {
     pub(crate) fn new(env: BTreeMap<OsString, OsString>) -> Self {
         RexurrectCmd {
+            program: PathBuf::from(bin()),
             args: Vec::new(),
             env,
             path_prepend: Vec::new(),
@@ -38,6 +40,14 @@ impl RexurrectCmd {
     /// is empty).
     pub fn stdin(mut self, input: impl Into<Vec<u8>>) -> Self {
         self.stdin = Some(input.into());
+        self
+    }
+
+    /// Runs the binary by `path` instead of by its own: a symlink to
+    /// [`bin`], say, the way Homebrew's `bin` directory links to the binary.
+    /// rexurrect takes its own path as it was run.
+    pub fn via(mut self, path: impl Into<PathBuf>) -> Self {
+        self.program = path.into();
         self
     }
 
@@ -80,7 +90,7 @@ impl RexurrectCmd {
     /// Starts the run without waiting for it, e.g. to run two at once.
     pub fn spawn(mut self) -> Running {
         prepend_path(&mut self.env, &self.path_prepend);
-        let mut child = Command::new(bin())
+        let mut child = Command::new(&self.program)
             .args(&self.args)
             .env_clear()
             .envs(&self.env)
