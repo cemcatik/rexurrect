@@ -1,0 +1,22 @@
+# zizmor's configuration. Every ignore here is for release.yml, which dist
+# generates: its findings are handled here, never by editing it (a
+# hand-edited workflow makes `dist plan` fail on pull requests). Ignores are
+# by file, not line, so they survive `dist generate` moving lines around.
+rules:
+  # dist needs `contents: write` to publish the release. On a pull request
+  # from a fork, GitHub makes the token read-only anyway.
+  excessive-permissions:
+    ignore:
+      - release.yml
+  # Every expansion is the tag's name (`github.ref_name`, and plan's
+  # `tag-flag` made from it) or the build matrix `dist plan` computes from
+  # this repository's own config. Only someone who can push to the repository
+  # can push a tag, and the build jobs run only on a tag push.
+  template-injection:
+    ignore:
+      - release.yml
+  # dist runs builds in a container only for Linux targets, and rexurrect
+  # builds none.
+  unpinned-images:
+    ignore:
+      - release.yml
