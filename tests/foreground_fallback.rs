@@ -195,7 +195,7 @@ fn a_command_block_started_through_a_symlink_named_for_its_version_restores_with
     let env = TestEnv::new();
     let server = env.start_server();
     let version = env.mkdir("versions").join("2.1.309");
-    build_sleeper(&version);
+    build_sleeper(&env, &version);
     let claude = env.mkdir("bin").join("claude");
     std::os::unix::fs::symlink(&version, &claude).unwrap();
     let command = [claude.to_str().unwrap(), "600"];

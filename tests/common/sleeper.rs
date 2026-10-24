@@ -12,6 +12,8 @@
 use std::path::Path;
 use std::process::Command;
 
+use super::env::TestEnv;
+
 /// The program's source: sleeps for the number of seconds it's given.
 const SOURCE: &str = r#"fn main() {
     let seconds = std::env::args().nth(1).expect("seconds").parse().expect("a number");
@@ -21,11 +23,15 @@ const SOURCE: &str = r#"fn main() {
 
 /// Builds the sleeper as the executable `path` (its parent must exist), so
 /// `path 600` sleeps 600 seconds and the process is named `path`'s file name.
-pub fn build_sleeper(path: &Path) {
-    let source = path.with_file_name("sleeper.rs");
+/// Its source goes in `env`'s root, so `path`'s directory holds only `path`.
+///
+/// `rustc` runs with the test's own environment, not the allowlisted one
+/// fixture processes get: it needs the toolchain's (rustup's, the linker's)
+/// variables and never reaches Rex.
+pub fn build_sleeper(env: &TestEnv, path: &Path) {
+    let source = env.root().join("sleeper.rs");
     std::fs::write(&source, SOURCE).unwrap();
-    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-    let output = Command::new(rustc)
+    let output = Command::new("rustc")
         .args(["--edition", "2024", "-o"])
         .arg(path)
         .arg(&source)

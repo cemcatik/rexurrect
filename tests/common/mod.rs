@@ -21,9 +21,9 @@
 //! snapshot taken before a restart), [`TestEnv::listed`],
 //! [`Server::sorted_labels`], [`Server::assert_empty_prompt`].
 //!
-//! Safety: every child process gets an environment built from an allowlist,
-//! so `REX_BLOCK`, `REX_SESSION`, the real `REX_SERVER` and the user's XDG
-//! dirs never leak in. Harness `rex` calls always pass `-S <endpoint>` and
+//! Safety: every child process that can reach Rex gets an environment built
+//! from an allowlist, so `REX_BLOCK`, `REX_SESSION`, the real `REX_SERVER` and
+//! the user's XDG dirs never leak in. Harness `rex` calls always pass `-S <endpoint>` and
 //! `--autostart=false`. Nothing touches process-global state, so tests can run
 //! concurrently; each test starts its own server(s).
 //!
