@@ -328,7 +328,7 @@ mod tests {
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
-    fn this_processs_own_arguments_are_read() {
+    fn the_arguments_of_this_process_are_read() {
         let arguments = arguments(std::process::id()).unwrap().unwrap();
         let expected: Vec<String> = std::env::args().collect();
         assert_eq!(arguments, expected);
@@ -424,7 +424,7 @@ mod tests {
     /// The Linux login server (root's) starts each account's server as that
     /// account: `rex login-server session ... -- server run --exit-empty`.
     #[test]
-    fn proc_gives_a_processs_parent_and_absolute_executable() {
+    fn proc_gives_the_parent_and_absolute_executable_of_a_process() {
         let proc = FakeProc::new("parent");
         proc.process(4321, "rex", 900, [1000; 4], Some("/usr/bin/rex"));
 
