@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: github-actions
+    directory: /
+    # dist generates the release workflow and pins its actions itself:
+    # update dist instead (`cargo-dist-version` in dist-workspace.toml).
+    exclude-paths:
+      - .github/workflows/release.yml
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
