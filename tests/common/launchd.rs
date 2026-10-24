@@ -11,7 +11,7 @@ use super::env::TestEnv;
 use super::rexurrect::{RexurrectCmd, RunOutput};
 use super::scheduled::{run_job, write_script};
 
-pub const AGENTS_DIR_VAR: &str = "REXURRECT_LAUNCH_AGENTS_DIR";
+const AGENTS_DIR_VAR: &str = "REXURRECT_LAUNCH_AGENTS_DIR";
 pub const LABEL: &str = "io.github.cemcatik.rexurrect.autosave";
 
 /// A stand-in for the user's launchd domain: a LaunchAgents directory and a
@@ -134,7 +134,7 @@ fn plists_in(dir: &Path) -> Vec<Agent> {
 }
 
 impl Agent {
-    pub fn read(path: &Path) -> Agent {
+    fn read(path: &Path) -> Agent {
         let out = Command::new("/usr/bin/plutil")
             .args(["-convert", "json", "-o", "-"])
             .arg(path)

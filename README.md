@@ -938,9 +938,8 @@ pass: run `cargo test` locally.
 The integration tests run the built binary against throwaway Rex servers, so they need the
 `rex` CLI on `PATH` (or its path in `REX_BIN`). Each test starts its own server under
 `/tmp/rxt.*` with its own state directory, config file and minimal zsh config, and stops it
-afterwards.
-They never touch your real Rex server, sessions or snapshots. The shared harness is in
-`tests/common/`.
+afterwards. They never touch your real Rex server, sessions or snapshots. The shared harness is
+in `tests/common/`.
 
 Autosave's tests never touch the real launchd or systemd either: `launchctl` and `systemctl`
 are found on `PATH`, so they put a stand-in first, and `REXURRECT_LAUNCH_AGENTS_DIR` replaces

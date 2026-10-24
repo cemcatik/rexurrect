@@ -2,7 +2,9 @@
 //!
 //! Each subcommand with options parses them into the options struct its module
 //! defines. To add a subcommand: a `Command` variant, a line in `parse`, a
-//! `parse_<name>` function and a line in `USAGE`.
+//! `parse_<name>` function and a line in `USAGE`. A subcommand that takes
+//! another's options reuses its struct and parser: `setup` takes
+//! `autosave install`'s.
 
 use std::ffi::OsString;
 use std::fmt;

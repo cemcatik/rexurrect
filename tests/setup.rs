@@ -10,6 +10,9 @@
 
 mod common;
 
+use std::os::unix::fs::symlink;
+use std::path::PathBuf;
+
 use common::launchd::FakeLaunchd;
 use common::*;
 
@@ -73,14 +76,14 @@ fn setup_prints_the_auto_restore_line_and_how_to_append_it_to_init_lua() {
 /// as Homebrew links one to its Cellar, and the recorder in
 /// `share/rexurrect/`, where Homebrew links the formula's extra files.
 struct Prefix {
-    dir: std::path::PathBuf,
+    dir: PathBuf,
 }
 
 impl Prefix {
     fn new(env: &TestEnv) -> Prefix {
         let dir = env.mkdir("prefix");
         std::fs::create_dir_all(dir.join("bin")).unwrap();
-        std::os::unix::fs::symlink(common::rexurrect::bin(), dir.join("bin/rexurrect")).unwrap();
+        symlink(common::rexurrect::bin(), dir.join("bin/rexurrect")).unwrap();
         std::fs::create_dir_all(dir.join("share/rexurrect")).unwrap();
         std::fs::copy(
             common::zsh::recorder_plugin(),
@@ -90,12 +93,17 @@ impl Prefix {
         Prefix { dir }
     }
 
-    fn bin(&self) -> std::path::PathBuf {
+    fn bin(&self) -> PathBuf {
         self.dir.join("bin/rexurrect")
     }
 
-    fn recorder(&self) -> std::path::PathBuf {
-        self.dir.join("share/rexurrect/rexurrect.plugin.zsh")
+    /// Where Homebrew links the formula's extra files.
+    fn share(&self) -> PathBuf {
+        self.dir.join("share/rexurrect")
+    }
+
+    fn recorder(&self) -> PathBuf {
+        self.share().join("rexurrect.plugin.zsh")
     }
 }
 
@@ -122,10 +130,8 @@ fn run_from_a_homebrew_prefix_setup_prints_the_line_that_sources_its_recorder() 
     );
     // The oh-my-zsh way: the recorder's directory as a custom plugin.
     assert!(
-        out.stdout.contains(&format!(
-            "ln -s {}",
-            prefix.recorder().parent().unwrap().display()
-        )),
+        out.stdout
+            .contains(&format!("ln -s {}", prefix.share().display())),
         "{out}"
     );
     assert!(!out.stdout.contains(RECORDER_DOCS), "{out}");
