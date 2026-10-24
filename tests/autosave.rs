@@ -11,11 +11,8 @@
 
 mod common;
 
-use common::launchd::{FakeLaunchd, LABEL};
+use common::launchd::{FakeLaunchd, LABEL, NO_SERVER};
 use common::*;
-
-/// An endpoint for install tests that never run the agent's job.
-const NO_SERVER: &str = "unix:///tmp/rxt-none/s.sock";
 
 #[test]
 fn install_loads_an_agent_that_saves_every_15_minutes_by_default() {

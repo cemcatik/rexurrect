@@ -11,8 +11,11 @@ use serde_json::Value;
 use super::env::{SYSTEM_PATH, TestEnv};
 use super::rexurrect::{RexurrectCmd, RunOutput};
 
-pub const AGENTS_DIR_VAR: &str = "REXURRECT_LAUNCH_AGENTS_DIR";
+const AGENTS_DIR_VAR: &str = "REXURRECT_LAUNCH_AGENTS_DIR";
 pub const LABEL: &str = "io.github.cemcatik.rexurrect.autosave";
+
+/// An endpoint for install tests that never run the agent's job.
+pub const NO_SERVER: &str = "unix:///tmp/rxt-none/s.sock";
 
 /// A stand-in for the user's launchd domain: a LaunchAgents directory and a
 /// `launchctl` that models `print`, `bootstrap` and `bootout` on it the way
@@ -136,7 +139,7 @@ fn plists_in(dir: &Path) -> Vec<Agent> {
 }
 
 impl Agent {
-    pub fn read(path: &Path) -> Agent {
+    fn read(path: &Path) -> Agent {
         let out = Command::new("/usr/bin/plutil")
             .args(["-convert", "json", "-o", "-"])
             .arg(path)

@@ -652,10 +652,10 @@ throwaway Rex servers, and Rex is a private beta that CI can't install, so CI ne
 links to or references it. A green check means the integration tests compile, not that they
 pass: run `cargo test` locally.
 
-The integration tests need the `rex` CLI on `PATH` (or its path in `REX_BIN`). Each test starts its own server under
-`/tmp/rxt.*` with its own state directory and a minimal zsh config, and stops it afterwards.
-They never touch your real Rex server, sessions or snapshots. The shared harness is in
-`tests/common/`.
+The integration tests need the `rex` CLI on `PATH` (or its path in `REX_BIN`). Each test
+starts its own server under `/tmp/rxt.*` with its own state directory and a minimal zsh config,
+and stops it afterwards. They never touch your real Rex server, sessions or snapshots. The
+shared harness is in `tests/common/`.
 
 Autosave's tests never touch the real launchd either: `launchctl` is found on `PATH`, so they
 put a stand-in first, and `REXURRECT_LAUNCH_AGENTS_DIR` replaces `~/Library/LaunchAgents`.
