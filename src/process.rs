@@ -211,7 +211,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn this_processs_own_arguments_are_read() {
+    fn the_arguments_of_this_process_are_read() {
         let arguments = arguments(std::process::id()).unwrap().unwrap();
         let expected: Vec<String> = std::env::args().collect();
         assert_eq!(arguments, expected);

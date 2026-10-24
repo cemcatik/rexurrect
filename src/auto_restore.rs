@@ -86,7 +86,7 @@ pub fn run(options: &AutoRestoreOptions) -> Result<ExitCode> {
 /// auto-restore could otherwise pick a different state directory from the
 /// user's shells and their recorder. `env` adds the state directory to the
 /// server's environment.
-fn hook() -> Result<String> {
+pub fn hook() -> Result<String> {
     let program = std::env::current_exe().with_context(|| "finding rexurrect's own path")?;
     let state = StateDir::from_env()?;
     Ok(format!(
