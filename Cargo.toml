@@ -2,6 +2,8 @@
 name = "rexurrect"
 version = "0.1.0"
 edition = "2024"
+# The oldest Rust that builds every target. CI checks it.
+rust-version = "1.89"
 description = "Save Rex sessions and recreate them after the Rex server stops"
 license = "MIT"
 repository = "https://github.com/cemcatik/rexurrect"
