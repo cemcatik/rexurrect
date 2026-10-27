@@ -521,12 +521,12 @@ fn values_systemd_would_expand_reach_the_job_as_they_were() {
     let env = TestEnv::new();
     let systemd = FakeSystemd::new(&env);
     let state = env.mkdir("state 100%h $HOME \"q\" \\b");
-    let programs = "claude %n $USER \"x\" \\y";
+    let config = env.mkdir("config %n $USER \"x\" \\y").join("config.toml");
 
     systemd
         .aim(env.rexurrect_at("unix:///tmp/rxt%20none/s.sock"))
         .env(STATE_DIR_VAR, &state)
-        .env("REXURRECT_NO_SCROLLBACK", programs)
+        .env(CONFIG_VAR, &config)
         .args(["autosave", "install"])
         .run()
         .assert_success();
@@ -541,8 +541,8 @@ fn values_systemd_would_expand_reach_the_job_as_they_were() {
         Some(state.to_str().unwrap())
     );
     assert_eq!(
-        units.env_var("REXURRECT_NO_SCROLLBACK").as_deref(),
-        Some(programs)
+        units.env_var(CONFIG_VAR).as_deref(),
+        Some(config.to_str().unwrap())
     );
 }
 
@@ -735,8 +735,10 @@ fn the_service_gets_only_the_system_path() {
     );
 }
 
+/// The config file's path is pinned, never its settings, and the moved
+/// variables aren't handed on.
 #[test]
-fn autosaves_keep_as_many_snapshots_as_install_was_told_to() {
+fn an_edit_to_the_config_file_after_install_reaches_the_next_autosave() {
     let env = TestEnv::new();
     let systemd = FakeSystemd::new(&env);
     let server = env.start_server();
@@ -744,12 +746,14 @@ fn autosaves_keep_as_many_snapshots_as_install_was_told_to() {
     server.wait_for_pwds(&fixture);
     systemd
         .aim(env.rexurrect(&server))
-        .env("REXURRECT_KEEP", "2")
+        .env("REXURRECT_KEEP", "5")
         .args(["autosave", "install"])
         .run()
         .assert_success();
     let units = systemd.the_units();
+    assert_eq!(units.env_var("REXURRECT_KEEP"), None);
 
+    env.write_config("keep = 2\n");
     for _ in 0..3 {
         units.run_as_systemd(&env).assert_success();
     }

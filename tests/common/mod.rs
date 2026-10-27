@@ -4,8 +4,9 @@
 //! and assert only on what Rex reports (`session.view`, `pwd`,
 //! `rex capture`), never on the snapshot file's format.
 //!
-//! - [`TestEnv`]: one test's temp world (state dir, harness `ZDOTDIR`,
-//!   scratch dirs). Start servers from it and run the binary through it.
+//! - [`TestEnv`]: one test's temp world (state dir, config file, harness
+//!   `ZDOTDIR`, scratch dirs). Start servers from it and run the binary
+//!   through it.
 //! - [`Server`]: a throwaway `rex server run` with its own short socket path,
 //!   `--state-dir` and init.lua, plus the client calls tests need (create,
 //!   view, write, pwd, capture, kill, rename). Stopped on drop.
@@ -54,7 +55,7 @@ pub mod stub;
 pub mod tempdir;
 pub mod zsh;
 
-pub use env::{APP_SESSION_WATCH_VAR, STATE_DIR_VAR, SYSTEM_PATH, TestEnv};
+pub use env::{CONFIG_VAR, STATE_DIR_VAR, SYSTEM_PATH, TestEnv};
 pub use fixture::{FixtureSession, Layout, Shape, Window, block, hsplit, shell, vsplit, window};
 pub use fixture::{WindowLabels, default_window_label, labels};
 pub use rexurrect::{RexurrectCmd, RunOutput, Running};

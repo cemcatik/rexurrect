@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use crate::account;
 use crate::app_session::{self, Watched};
+use crate::config::{self, CONFIG_VAR, Config, ConfigFile};
 use crate::error::{Context, Error, Result};
 use crate::instance::RestoreLock;
 use crate::log::{self, Log};
@@ -31,7 +32,6 @@ use crate::process;
 use crate::restore::{self, RestoreReport};
 use crate::rex::Rex;
 use crate::rex::server_process::{self, ServerProcess, Starter};
-use crate::settings;
 use crate::state::{STATE_DIR_VAR, StateDir};
 
 #[derive(Debug, Default)]
@@ -45,9 +45,6 @@ pub struct AutoRestoreOptions {
     pub print_hook: bool,
 }
 
-/// How long the background run waits for the server to be ready, in seconds.
-const READY_TIMEOUT_VAR: &str = "REXURRECT_READY_TIMEOUT";
-const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long one readiness check waits for the server to answer. A server
 /// still running init.lua accepts the connection and answers nothing.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(1);
@@ -68,7 +65,7 @@ pub fn run(options: &AutoRestoreOptions) -> Result<ExitCode> {
 /// The line that turns auto-restore on in init.lua:
 ///
 /// ```lua
-/// do local r = rex.exec({ [[<rexurrect>]], "auto-restore" }, { env = { REXURRECT_STATE_DIR = [[<state dir>]] } }) if r then io.stderr:write(r.stderr) end end
+/// do local r = rex.exec({ [[<rexurrect>]], "auto-restore" }, { env = { REXURRECT_STATE_DIR = [[<state dir>]], REXURRECT_CONFIG = [[<config file>]] } }) if r then io.stderr:write(r.stderr) end end
 /// ```
 ///
 /// Rex runs commands from init.lua only through `rex.exec` (`os.execute`
@@ -80,20 +77,25 @@ pub fn run(options: &AutoRestoreOptions) -> Result<ExitCode> {
 /// Rex warns about that itself, with init.lua's file and line. `do ... end`
 /// keeps `r` out of the rest of init.lua.
 ///
-/// Both paths are pinned as they are here. The server runs init.lua in its
-/// own environment, not the user's shell's: the Rex app starts it with a bare
-/// `PATH`, so `rexurrect` needs its full path, and with no `XDG_*`, so
+/// The three paths are pinned as they are here. The server runs init.lua in
+/// its own environment, not the user's shell's: the Rex app starts it with a
+/// bare `PATH`, so `rexurrect` needs its full path, and with no `XDG_*`, so
 /// auto-restore could otherwise pick a different state directory from the
-/// user's shells and their recorder. `env` adds the state directory to the
-/// server's environment.
+/// user's shells and their recorder, and a different config file from the
+/// one they edit. `env` adds the state directory and the config file to the
+/// server's environment. The file's path, not its settings: an edit takes
+/// effect at the next server start.
 fn hook() -> Result<String> {
     let program = std::env::current_exe().with_context(|| "finding rexurrect's own path")?;
     let state = StateDir::from_env()?;
+    let config = ConfigFile::from_env()?;
     Ok(format!(
-        "do local r = rex.exec({{ {}, \"auto-restore\" }}, {{ env = {{ {STATE_DIR_VAR} = {} }} }}) \
+        "do local r = rex.exec({{ {}, \"auto-restore\" }}, \
+         {{ env = {{ {STATE_DIR_VAR} = {}, {CONFIG_VAR} = {} }} }}) \
          if r then io.stderr:write(r.stderr) end end",
         lua_string(&program)?,
-        lua_string(state.path())?
+        lua_string(state.path())?,
+        lua_string(config.path())?
     ))
 }
 
@@ -118,10 +120,12 @@ fn lua_long_string(text: &str) -> String {
 /// Starts the background run, aimed at the server that started this
 /// process, and returns without waiting for it. The background run is
 /// detached from the server: its own process group, no output, and none of
-/// the server's open files.
+/// the server's open files. It doesn't get the moved variables either: this
+/// run has warned about them, and they're read by neither.
 fn start_in_background() -> Result<ExitCode> {
-    ready_timeout()?;
-    app_session::watch_length()?;
+    // Checked here, so a bad setting is reported where init.lua's output
+    // goes, not only in the background run's log entry.
+    Config::load()?;
     let server = match server_process::find_starter()? {
         Starter::Server(server) => server,
         Starter::OtherRex { command } => {
@@ -140,12 +144,17 @@ fn start_in_background() -> Result<ExitCode> {
     };
     let program = std::env::current_exe().with_context(|| "finding rexurrect's own path")?;
     process::stop_passing_on_open_files();
-    Command::new(program)
+    let mut background = Command::new(program);
+    background
         .args(["auto-restore", "--server-pid", &server.pid.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .process_group(0)
+        .process_group(0);
+    for var in config::moved_variables() {
+        background.env_remove(var);
+    }
+    background
         .spawn()
         .with_context(|| "starting auto-restore in the background")?;
     Ok(ExitCode::SUCCESS)
@@ -157,12 +166,11 @@ fn start_in_background() -> Result<ExitCode> {
 /// `app_session`). Logs what happened as one entry, once it stops looking
 /// (after an entry for each failure).
 fn restore_when_ready(pid: u32) -> Result<ExitCode> {
-    let timeout = ready_timeout()?;
-    let watch = app_session::watch_length()?;
+    let config = Config::load()?;
     let state = StateDir::from_env()?;
     let server = ServerProcess::read(pid)?
         .ok_or_else(|| Error::new(format!("there's no Rex server with pid {pid}")))?;
-    let ready = wait_until_ready(&server, timeout)?;
+    let ready = wait_until_ready(&server, config.ready_timeout)?;
     let lock = RestoreLock::acquire(&state)?;
     // Read again under the lock: the instance to restore into is whichever
     // the server is running once it's this run's turn.
@@ -186,7 +194,7 @@ fn restore_when_ready(pid: u32) -> Result<ExitCode> {
         }
     };
     if created {
-        match app_session::close_app_session(&ready.rex, &state, &server, watch) {
+        match app_session::close_app_session(&ready.rex, &state, &server, &config) {
             Watched::Closed(session) => outcome.push_str(&format!("\nclosed {session}")),
             Watched::NoneFound => {}
             Watched::ServerStopped => {
@@ -260,9 +268,4 @@ fn wait_until_ready(server: &ServerProcess, timeout: Duration) -> Result<Ready> 
         }
         std::thread::sleep(CHECK_INTERVAL);
     }
-}
-
-/// `REXURRECT_READY_TIMEOUT`, or the default of a minute.
-fn ready_timeout() -> Result<Duration> {
-    settings::seconds(READY_TIMEOUT_VAR, DEFAULT_READY_TIMEOUT)
 }

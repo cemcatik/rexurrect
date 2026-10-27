@@ -8,12 +8,11 @@ use std::ffi::OsStr;
 use std::process::ExitCode;
 
 use crate::account;
+use crate::config::{CONFIG_VAR, ConfigFile};
 use crate::error::{Context, Error, Result};
 use crate::log::Log;
-use crate::retention::{KEEP_VAR, Retention};
 use crate::rex;
 use crate::scheduler::{self, Interval, Job};
-use crate::scrollback::NO_SCROLLBACK_VAR;
 use crate::settings;
 use crate::state::{STATE_DIR_VAR, StateDir};
 
@@ -58,12 +57,14 @@ fn install(options: &InstallOptions) -> Result<ExitCode> {
         "autosave installed: `rexurrect save` runs every {} as the {}\n\
          - server: {}\n\
          - state:  {}\n\
+         - config: {} (read at every autosave)\n\
          - log:    {} (failures, and blocks whose scrollback was too large to save)\n\
-         Install again after changing which server or state directory to use.",
+         Install again after changing which server, state directory or config file to use.",
         job.interval,
         scheduler.describe(),
         job.env[rex::SERVER_VAR],
         state.path().display(),
+        job.env[CONFIG_VAR],
         Log::new(&state).path().display(),
     );
     Ok(ExitCode::SUCCESS)
@@ -83,11 +84,10 @@ fn install(options: &InstallOptions) -> Result<ExitCode> {
 ///   environment, and not a fallback when the server isn't running.
 /// - the state directory, as resolved here, so autosave shares snapshots,
 ///   lineage and recorder files with manual runs and the zsh recorder;
-/// - `REXURRECT_KEEP`, if set, so autosave doesn't prune the snapshots the
-///   user wants kept (checked here, so a bad value fails now rather than
-///   every autosave);
-/// - `REXURRECT_NO_SCROLLBACK`, if set (even empty), so autosave leaves out
-///   the scrollback of the same programs as manual saves;
+/// - the config file's path, as resolved here, so autosave reads the
+///   settings manual runs read. Its path, never its settings: an edit takes
+///   effect at the next autosave. A file that's there is checked now, so a
+///   bad setting fails install rather than every autosave;
 /// - `PATH`: the system directories launchd uses by default, and no `rex`.
 ///   Rex moves its CLI on updates, so save runs the `rex` a running Rex
 ///   server runs instead (ADR-0003).
@@ -109,13 +109,9 @@ fn job_env(state: &StateDir) -> Result<BTreeMap<String, String>> {
     let mut env = BTreeMap::new();
     env.insert(rex::SERVER_VAR.to_string(), server);
     env.insert(STATE_DIR_VAR.to_string(), utf8(state.path().as_os_str())?);
-    Retention::from_env()?;
-    if let Some(keep) = settings::env_non_empty(KEEP_VAR) {
-        env.insert(KEEP_VAR.to_string(), utf8(&keep)?);
-    }
-    if let Some(programs) = std::env::var_os(NO_SCROLLBACK_VAR) {
-        env.insert(NO_SCROLLBACK_VAR.to_string(), utf8(&programs)?);
-    }
+    let config = ConfigFile::from_env()?;
+    config.load()?;
+    env.insert(CONFIG_VAR.to_string(), utf8(config.path().as_os_str())?);
     env.insert("PATH".to_string(), SYSTEM_PATH.to_string());
     Ok(env)
 }

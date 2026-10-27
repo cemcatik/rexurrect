@@ -4,16 +4,16 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::capture::{self, SessionWithScrollback};
+use crate::config::Config;
 use crate::create;
 use crate::error::{Context, Error, Result};
 use crate::instance::RestoreLock;
 use crate::lineage::LineageMap;
 use crate::log;
 use crate::restore;
-use crate::retention::Retention;
 use crate::rex::Rex;
 use crate::rex::api::ServerStatus;
-use crate::scrollback::{NoScrollbackPrograms, ScrollbackStore};
+use crate::scrollback::ScrollbackStore;
 use crate::snapshot::{SavedLayout, SavedSession, Snapshot};
 use crate::startup::{Starting, StartingSessions};
 use crate::state::StateDir;
@@ -21,21 +21,6 @@ use crate::store::SnapshotStore;
 use crate::timestamp::Timestamp;
 use crate::too_large::TooLargeBlocks;
 use crate::upkeep::{self, Live};
-
-/// Save's settings, from the environment.
-pub struct Settings {
-    pub retention: Retention,
-    pub no_scrollback: NoScrollbackPrograms,
-}
-
-impl Settings {
-    pub fn from_env() -> Result<Settings> {
-        Ok(Settings {
-            retention: Retention::from_env()?,
-            no_scrollback: NoScrollbackPrograms::from_env()?,
-        })
-    }
-}
 
 /// What a save did.
 pub enum Saved {
@@ -64,7 +49,7 @@ pub enum Saved {
 /// waits for it rather than saving a half-restored server.
 pub fn run() -> Result<ExitCode> {
     // Configuration first: a bad setting fails before anything is restored.
-    let settings = Settings::from_env()?;
+    let config = Config::load()?;
     let rex = Rex::from_env()?;
     let state = StateDir::from_env()?;
     let lock = RestoreLock::acquire(&state)?;
@@ -87,7 +72,7 @@ pub fn run() -> Result<ExitCode> {
             )));
         }
     }
-    match save(&rex, &state, &server, settings)? {
+    match save(&rex, &state, &server, config)? {
         Saved::Snapshot { path, sessions } => {
             println!("saved {sessions} session(s) to {}", path.display());
         }
@@ -100,19 +85,14 @@ pub fn run() -> Result<ExitCode> {
 
 /// Saves every session worth saving on the server `server` (its
 /// `server.status`) describes.
-pub fn save(
-    rex: &Rex,
-    state: &StateDir,
-    server: &ServerStatus,
-    settings: Settings,
-) -> Result<Saved> {
+pub fn save(rex: &Rex, state: &StateDir, server: &ServerStatus, config: Config) -> Result<Saved> {
     // Taken first: each kept session's scrollback is saved under the
     // snapshot's name as the walk reaches it, and startup windows are judged
     // as of then.
     let taken_at = Timestamp::now();
     let starting = StartingSessions::load(state)?.at(taken_at);
     let replaying: Vec<String> = starting.snapshots().map(str::to_string).collect();
-    let saved = save_snapshot(rex, state, server, settings, taken_at, starting);
+    let saved = save_snapshot(rex, state, server, config, taken_at, starting);
     // Scrollback is kept as long as its snapshot: old snapshots' goes with
     // them, and a save that wrote no snapshot (an empty server, a failure)
     // leaves none behind. A restore in its startup window keeps its
@@ -134,7 +114,7 @@ fn save_snapshot(
     rex: &Rex,
     state: &StateDir,
     server: &ServerStatus,
-    settings: Settings,
+    config: Config,
     taken_at: Timestamp,
     starting: Starting,
 ) -> Result<Saved> {
@@ -144,7 +124,7 @@ fn save_snapshot(
         &server.host_id,
         taken_at,
         starting,
-        settings.no_scrollback,
+        config.no_scrollback,
     )?;
     let mut live = Live::new();
     let mut sessions = Vec::new();
@@ -187,7 +167,7 @@ fn save_snapshot(
     snapshot
         .validate()
         .with_context(|| "the snapshot failed validation, so nothing was written")?;
-    let path = SnapshotStore::new(state).write(&snapshot, settings.retention)?;
+    let path = SnapshotStore::new(state).write(&snapshot, config.retention)?;
     // Logged only now: until the snapshot is written, no block is saved,
     // with scrollback or without. Only the blocks that start falling back
     // with this save (see `too_large`).
