@@ -40,7 +40,9 @@
 //!   the one on `PATH`: start that server with
 //!   `.shown_as(stub.dir().join("rex"))`.
 //! - an executable to copy, rename or run through a symlink:
-//!   [`build_sleeper`], a test-built program that sleeps.
+//!   [`build_sleeper`], a test-built program that sleeps;
+//! - a program rexurrect resumes (`nvim`, `claude`): [`stand_in_bin`],
+//!   whose runs [`runs`] reads back.
 
 #![allow(dead_code, unused_imports)]
 
@@ -51,6 +53,7 @@ pub mod rexurrect;
 pub mod scheduled;
 pub mod server;
 pub mod sleeper;
+pub mod stand_in;
 pub mod stub;
 pub mod tempdir;
 pub mod zsh;
@@ -62,4 +65,5 @@ pub use rexurrect::{RexurrectCmd, RunOutput, Running};
 pub use scheduled::{NO_SERVER, assert_explains_backing_out, run_job, write_script};
 pub use server::{Server, SessionSummary};
 pub use sleeper::build_sleeper;
+pub use stand_in::{build_stand_in, runs, stand_in_bin};
 pub use stub::RexStub;

@@ -146,7 +146,8 @@ Each restored block's last command is typed at its prompt but **never run**: pre
 resume, edit it, or clear it. Only single-line commands are typed; a block with no last
 command gets an empty prompt. A restored block keeps its last command through later saves and
 restores until the recorder records something new in it or, without the recorder, until a save
-sees a program running in it.
+sees a program running in it. A block that was running a program rexurrect can resume (Neovim,
+say) gets the program's resume command typed instead: see [Resuming programs](#resuming-programs).
 
 Each restored block also shows its scrollback, the output it held at save time, above the
 `Last login:` line and the new prompt, styles included. It wraps to the block's current width
@@ -283,6 +284,40 @@ rexurrect writes its own files with mode `0600`, and the recorder keeps its file
 rename), so a crash never leaves a partial snapshot or record behind; the log is appended to.
 A temporary file that a crash does leave behind is removed by the next save that writes a
 snapshot, once it has gone unchanged for an hour.
+
+## Resuming programs
+
+A block that was running a program when it was saved can come back with the program **resumed**,
+not just started again: Neovim with its buffers, splits and tab pages. rexurrect knows how to
+resume a program through its **program definition**. At each save, a block whose foreground
+program matches a definition (by the name it was run by or its executable's name, as
+`no_scrollback` matches) is saved as resumable. At restore, the definition builds the program's
+resume command, which is typed at the block's prompt in place of its last command, and **never
+run**: press Enter to resume.
+
+Only the program running at the save resumes. A block where you had quit Neovim before the save
+comes back with its last command, even if that command is `nvim init.lua`. A block that can't
+resume (see below) comes back with its last command too, as it always did. A resume command you
+don't run carries forward like any command restore typed: the block's shell is at its prompt at
+the next save, so the block isn't resumable any more, and it keeps that command as its last
+command until you run something.
+
+Snapshots taken before rexurrect resumed programs restore as they always did.
+
+### Neovim
+
+Neovim resumes from its **Neovim session** (its own record of its buffers, windows, tab pages and
+directory, nothing to do with a Rex session), following [vim-obsession]'s convention, which
+tmux-resurrect's `session` strategy uses: a `Session.vim` in the working directory. A block
+that was running `nvim` comes back with `nvim -S` typed if there's a `Session.vim` in its
+working directory at restore, and with its last command otherwise.
+
+rexurrect never writes Neovim sessions: your session manager does. With vim-obsession, run
+`:Obsess` once in a directory and it keeps `Session.vim` up to date from then on. Neovim saves
+on exit when its terminal goes away, so a session manager that saves on exit has saved by the
+time the Rex server is gone.
+
+[vim-obsession]: https://github.com/tpope/vim-obsession
 
 ## Settings
 

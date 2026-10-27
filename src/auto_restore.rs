@@ -175,7 +175,8 @@ fn restore_when_ready(pid: u32) -> Result<ExitCode> {
     // Read again under the lock: the instance to restore into is whichever
     // the server is running once it's this run's turn.
     let server = ready.rex.server_status()?;
-    let restored = restore::restore_unrestored_instance(&ready.rex, &state, &lock, &server)?;
+    let restored =
+        restore::restore_unrestored_instance(&ready.rex, &state, &lock, &server, &config)?;
     // The instance is recorded as restored by now. A save or restore that
     // starts while this run looks for the app session needn't wait for it.
     drop(lock);
