@@ -12,7 +12,7 @@ use crate::error::{Context, Error, Result};
 use crate::instance::RestoreLock;
 use crate::lineage::{Lineage, LineageMap};
 use crate::log;
-use crate::resume::Resuming;
+use crate::resume::{Input, Resuming};
 use crate::rex::Rex;
 use crate::rex::api::{CreatedSession, ServerStatus};
 use crate::scrollback::Replay;
@@ -250,7 +250,7 @@ fn restore_sessions(
     starting.retain(Timestamp::now(), is_live);
     let mut defaults = DefaultCommands::load(state)?;
     let replay = Replay::new(state);
-    let mut resuming = Resuming::new(&config.programs);
+    let mut resuming = Resuming::new(&config.programs, &config.auto_resume);
 
     let mut report = RestoreReport {
         snapshot: Some(snapshot_id.clone()),
@@ -271,8 +271,12 @@ fn restore_sessions(
             continue;
         }
         let as_created = create::as_created(saved, &home, &replay);
-        let inputs: Vec<Option<String>> = as_created.blocks().map(|b| resuming.input(b)).collect();
-        let request = create::create_request(&as_created, &inputs, &replay);
+        let inputs: Vec<Option<Input>> = as_created.blocks().map(|b| resuming.input(b)).collect();
+        let keystrokes: Vec<Option<String>> = inputs
+            .iter()
+            .map(|input| input.as_ref().map(Input::keystrokes))
+            .collect();
+        let request = create::create_request(&as_created, &keystrokes, &replay);
         let created = match rex.create_session(&request) {
             Ok(created) => created,
             Err(e) => {
@@ -308,8 +312,8 @@ fn restore_sessions(
         if let Ok(block_ids) = &block_ids {
             let mut changed = false;
             for (block_id, input) in block_ids.iter().zip(&inputs) {
-                if let Some(command) = input {
-                    changed |= defaults.set(block_id, command);
+                if let Some(input) = input {
+                    changed |= defaults.set(block_id, input.command());
                 }
             }
             if changed {

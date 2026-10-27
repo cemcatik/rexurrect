@@ -167,6 +167,11 @@ impl Default for Programs {
 }
 
 impl Programs {
+    /// Every definition's name.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.definitions.iter().map(|d| d.name.as_str())
+    }
+
     /// The definition named `name`.
     pub fn get(&self, name: &str) -> Option<&ProgramDefinition> {
         self.definitions.iter().find(|d| d.name == name)

@@ -34,7 +34,7 @@ pub fn as_created(saved: &SavedSession, home: &Path, replay: &Replay) -> SavedSe
 }
 
 /// The request that creates `created`, a session [`as_created`] made.
-/// `inputs` holds what to type at each block's prompt, in
+/// `inputs` holds what to write to each block's terminal as if typed, in
 /// [`SavedSession::blocks`] order (see `resume`). `replay` prints each
 /// block's scrollback above its new prompt.
 pub fn create_request(
