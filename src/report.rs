@@ -5,7 +5,7 @@
 //! and a problem in rexurrect must never show up in the agent's
 //! conversation or block it. What it can't do it logs to `rexurrect.log`
 //! instead, once per cause (see [`FailureLog`]). It does nothing at all
-//! outside Rex (no `REX_BLOCK`).
+//! outside Rex (no `REX_BLOCK`, or an empty one).
 //!
 //! The value is the argument after the program's name. Without one, a
 //! built-in agent's hook passes its own payload on stdin, and `report`
@@ -28,6 +28,7 @@ use crate::foreground;
 use crate::log::Log;
 use crate::programs::{Payload, StateKind};
 use crate::resume_state::{Reported, ResumeStates};
+use crate::settings;
 use crate::state::{self, STATE_DIR_VAR, StateDir};
 
 /// The variable Rex sets in each block's shell, and so in every program it
@@ -65,7 +66,7 @@ pub fn run(options: &ReportOptions) -> Result<ExitCode> {
 /// Stores the block's resume state, or logs why it can't. Never fails and
 /// never prints.
 fn report(options: &ReportOptions) {
-    let Some(block_id) = std::env::var_os(BLOCK_VAR) else {
+    let Some(block_id) = settings::env_non_empty(BLOCK_VAR) else {
         return;
     };
     let Ok(state) = StateDir::from_env() else {
