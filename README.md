@@ -261,8 +261,8 @@ live session restore created from which saved one. Deleting `lineage.json` makes
 instances restore has run in (the 32 most recent), and `restore.lock` makes restores take turns.
 `starting-sessions.json` holds what restore created each session with, for saves in its first
 two minutes.
-`recorder/` holds one file per block with the last command the recorder recorded; only
-recorders write there. `default-commands.json` holds each block's last command when there's no
+`recorder/` holds one file per block with the last command the recorder recorded, rewritten
+each time the shell's prompt comes back; only recorders write there. `default-commands.json` holds each block's last command when there's no
 recorder file: the last program a save saw running in it, else the command restore typed there.
 `resume/` holds one file per block with the resume state its program reported through
 `rexurrect report` (see [Resuming programs](#resuming-programs)); only `report` writes there, and
@@ -302,7 +302,11 @@ run**: press Enter to resume. Programs you list in `auto_resume` come back runni
 [Auto-resume](#auto-resume)).
 
 Only the program running at the save resumes. A block where you had quit Neovim before the save
-comes back with its last command, even if that command is `nvim init.lua`. A block that can't
+comes back with its last command, even if that command is `nvim init.lua`. So does one where you
+quit it after the save but before the server stopped, if the block's shell loads the zsh
+recorder: the recorder notes each time the shell's prompt comes back, so restore can tell, and
+the block gets the last command its recorder had at the stop, typed, never run, even for a
+program in `auto_resume`. Without a recorder, that block still resumes. A block that can't
 resume (see below) comes back with its last command too, as it always did. A resume command you
 don't run carries forward like any command restore typed: the block's shell is at its prompt at
 the next save, so the block isn't resumable any more, and it keeps that command as its last

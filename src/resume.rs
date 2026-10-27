@@ -138,6 +138,7 @@ mod tests {
                 state: state.map(str::to_string),
                 command_line: Some(line.to_string()),
             }),
+            block_id: None,
         }
     }
 

@@ -103,6 +103,7 @@ impl CaptureContext {
             last_command: None,
             scrollback: None,
             resume: None,
+            block_id: None,
         }
     }
 }
@@ -332,6 +333,7 @@ impl Capture<'_> {
                 last_command: created.last_command.clone(),
                 scrollback: None,
                 resume: created.resume.clone(),
+                block_id: Some(block_id.clone()),
             });
         }
         let process = rex.terminal_process(session_id, block_id)?;
@@ -341,6 +343,7 @@ impl Capture<'_> {
             last_command: self.last_command(block_id, recorded, &process)?,
             scrollback: None,
             resume: self.resume(block_id, &process)?,
+            block_id: Some(block_id.clone()),
         };
         let has_scrollback = !self.context.no_scrollback.running_in(&process);
         self.scrollback.push(has_scrollback.then(|| {

@@ -19,6 +19,11 @@
 //!   earlier versions of rexurrect wrote them too, and recorder files holding
 //!   commands, for the blocks they created: these still count as recorders'
 //!   records;
+//! - rewritten, unchanged, each time the shell's prompt comes back, never
+//!   created that way: a record written after a snapshot was taken means
+//!   the shell got control back after that save, so a program the save
+//!   found running in the block had exited (see `exited`). Optional for a
+//!   recorder: without it, such a block resumes;
 //! - written to a temporary file whose name starts with `.` in the same
 //!   directory, then renamed over the record. Such a file left unchanged
 //!   for over an hour counts as left behind by a recorder that crashed, and
@@ -31,7 +36,7 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::error::Result;
+use crate::error::{Context, Result};
 use crate::state::{self, StateDir};
 
 const DIR: &str = "recorder";
@@ -75,6 +80,26 @@ impl RecorderFiles {
         } else {
             Recorded::LastCommand(command.to_string())
         })
+    }
+
+    /// When the block's recorder file was last written; `None` if there's
+    /// none. A recorder may rewrite a record unchanged each time its shell's
+    /// prompt comes back, so a record written after a save can mean the
+    /// shell got control back after it (see `exited`).
+    pub fn modified(&self, block_id: &str) -> Result<Option<SystemTime>> {
+        let Some(path) = self.file(block_id) else {
+            return Ok(None);
+        };
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => Ok(Some(
+                metadata
+                    .modified()
+                    .with_context(|| format!("reading {}", path.display()))?,
+            )),
+            Ok(_) => Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+        }
     }
 
     /// Removes the records of blocks `is_live` says aren't live, unless they
