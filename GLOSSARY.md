@@ -83,7 +83,7 @@ A save that runs on a timer without the user asking.
 _Avoid_: scheduled save, periodic save
 
 **Recorder**:
-The hook in a shell block's outermost shell that records each command as it starts, whatever the shell. Shells nested inside it (`nix develop`, `poetry shell`) don't record. Only shells record last commands: a program reports its resume state instead.
+The hook in a shell block's outermost shell that records each command as it starts, whatever the shell, and may rewrite that record each time the prompt comes back, so restore can tell the shell got control back after a save. Shells nested inside it (`nix develop`, `poetry shell`) don't record. Only shells record last commands: a program reports its resume state instead.
 
 **Ignored command**:
 A command the recorder doesn't record, leaving the previous last command in place: a command on the ignore list (by name, or by the last part of its path, as `/bin/ls`) run on its own, rexurrect itself by default, and any multi-line command.
@@ -132,7 +132,7 @@ _Avoid_: extra session, empty session, default session
 ### Resuming
 
 **Resume**:
-Bringing a program back in a restored block as it was, not just started again: its Neovim session, its agent conversation. Only a program that was in the block's foreground at the last save resumes; one that had exited by then doesn't, even if it's still the block's last command. Restore types the program's resume command at the block's prompt in place of its last command, or runs it when the program auto-resumes.
+Bringing a program back in a restored block as it was, not just started again: its Neovim session, its agent conversation. Only a program that was in the block's foreground at the last save resumes; one that had exited by then doesn't, even if it's still the block's last command, and neither does one whose block's recorder has rewritten its record since that save (the program exited before the server stopped). Restore types the program's resume command at the block's prompt in place of its last command, or runs it when the program auto-resumes.
 _Avoid_: restore (that's sessions), reopen, relaunch
 
 **Program definition**:

@@ -14,13 +14,7 @@ pub struct Timestamp {
 
 impl Timestamp {
     pub fn now() -> Timestamp {
-        let since_epoch = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("the clock is after 1970");
-        Timestamp {
-            secs: since_epoch.as_secs(),
-            micros: since_epoch.subsec_micros(),
-        }
+        Timestamp::from_system_time(SystemTime::now())
     }
 
     /// How long after `earlier` this is; `None` if it's before it (the
@@ -29,9 +23,14 @@ impl Timestamp {
         self.duration().checked_sub(earlier.duration())
     }
 
-    /// This moment as a `SystemTime`, to compare with a file's.
-    pub fn system_time(&self) -> SystemTime {
-        UNIX_EPOCH + self.duration()
+    /// `time` to the microsecond, as a file's modification time is kept
+    /// in a snapshot; the epoch for a time before it.
+    pub fn from_system_time(time: SystemTime) -> Timestamp {
+        let since_epoch = time.duration_since(UNIX_EPOCH).unwrap_or_default();
+        Timestamp {
+            secs: since_epoch.as_secs(),
+            micros: since_epoch.subsec_micros(),
+        }
     }
 
     fn duration(&self) -> Duration {

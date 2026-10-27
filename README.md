@@ -262,8 +262,9 @@ instances restore has run in (the 32 most recent), and `restore.lock` makes rest
 `starting-sessions.json` holds what restore created each session with, for saves in its first
 two minutes.
 `recorder/` holds one file per block with the last command the recorder recorded, rewritten
-each time the shell's prompt comes back; only recorders write there. `default-commands.json` holds each block's last command when there's no
-recorder file: the last program a save saw running in it, else the command restore typed there.
+each time the shell's prompt comes back; only recorders write there. `default-commands.json`
+holds each block's last command when there's no recorder file: the last program a save saw
+running in it, else the command restore typed there.
 `resume/` holds one file per block with the resume state its program reported through
 `rexurrect report` (see [Resuming programs](#resuming-programs)); only `report` writes there, and
 `report-failures.json` remembers which of its failures it has logged.

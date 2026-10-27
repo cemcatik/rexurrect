@@ -273,7 +273,7 @@ fn restore_sessions(
             report.outcomes.push(Outcome::WouldCreate { label });
             continue;
         }
-        let saved = exited::as_left(saved, &recorder, snapshot.taken_at)?;
+        let saved = exited::without_exited_programs(saved, &recorder);
         let as_created = create::as_created(&saved, &home, &replay);
         let inputs: Vec<Option<Input>> = as_created.blocks().map(|b| resuming.input(b)).collect();
         let keystrokes: Vec<Option<String>> = inputs

@@ -197,6 +197,13 @@ pub struct SavedResume {
     /// (see `foreground`); absent if it couldn't be read or typed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_line: Option<String>,
+    /// When the block's recorder file was last written, as save read it
+    /// just after finding the program: a record written since means the
+    /// block's shell got its prompt back, so the program had exited (see
+    /// `exited`). Absent if the block had no record then, and from
+    /// snapshots taken before #60.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_written_at: Option<Timestamp>,
 }
 
 #[cfg(test)]
@@ -237,5 +244,6 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(block.block_id, None);
+        assert_eq!(block.resume.unwrap().record_written_at, None);
     }
 }

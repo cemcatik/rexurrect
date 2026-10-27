@@ -137,6 +137,7 @@ mod tests {
                 program: program.to_string(),
                 state: state.map(str::to_string),
                 command_line: Some(line.to_string()),
+                record_written_at: None,
             }),
             block_id: None,
         }

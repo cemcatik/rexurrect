@@ -108,7 +108,21 @@ pub fn run_and_wait(server: &Server, session: &str, block: &str, dir: &Path, com
 /// Saves, kills the session `session`, restores it, and returns the
 /// restored session and its first block.
 pub fn restarted(env: &TestEnv, server: &Server, session: &str, label: &str) -> (String, String) {
+    restarted_after(env, server, session, label, || {})
+}
+
+/// [`restarted`], running `after_the_save` (quitting a program, say)
+/// between the save and the kill. Nothing saves in between, as when the
+/// server stops before the next autosave.
+pub fn restarted_after(
+    env: &TestEnv,
+    server: &Server,
+    session: &str,
+    label: &str,
+    after_the_save: impl FnOnce(),
+) -> (String, String) {
     env.save(server);
+    after_the_save();
     server.kill_session(session);
     env.restore(server);
     let restored = server.the_session_labelled(label);

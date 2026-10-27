@@ -332,7 +332,11 @@ impl Capture<'_> {
                 working_directory: created.working_directory.clone(),
                 last_command: created.last_command.clone(),
                 scrollback: None,
-                resume: created.resume.clone(),
+                // It has no record, so none can have been written then.
+                resume: created.resume.clone().map(|resume| SavedResume {
+                    record_written_at: None,
+                    ..resume
+                }),
                 block_id: Some(block_id.clone()),
             });
         }
@@ -408,10 +412,18 @@ impl Capture<'_> {
                 .map(|reported| reported.state)
                 .filter(|state| kind.accepts(state)),
         };
+        // Read after the program: a record written as it started is older,
+        // and one written as it exited, before this, keeps it resumable.
+        let record_written_at = self
+            .context
+            .recorder
+            .modified(block_id)?
+            .map(Timestamp::from_system_time);
         Ok(Some(SavedResume {
             program: definition.name.clone(),
             state,
             command_line: foreground::command_line(program)?,
+            record_written_at,
         }))
     }
 
