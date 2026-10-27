@@ -54,6 +54,9 @@ pub struct Config {
     pub app_session_watch: Duration,
     /// The program definitions blocks resume by: the built-in ones.
     pub programs: Programs,
+    /// `auto_resume`: the program definitions whose programs restore runs
+    /// rather than types (ADR-0006); none by default.
+    pub auto_resume: Vec<String>,
 }
 
 impl Default for Config {
@@ -64,6 +67,7 @@ impl Default for Config {
             ready_timeout: Duration::from_secs(60),
             app_session_watch: Duration::from_secs(30),
             programs: Programs::default(),
+            auto_resume: Vec::new(),
         }
     }
 }
@@ -106,6 +110,10 @@ impl Config {
                     config.app_session_watch =
                         seconds(value).ok_or_else(|| wrong(SECONDS_WANTED))?;
                 }
+                "auto_resume" => {
+                    config.auto_resume = program_names(value)
+                        .ok_or_else(|| wrong("a list of program names, like [\"nvim\"]"))?;
+                }
                 _ => {
                     return Err(Error::new(format!(
                         "`{key}` in {} isn't a setting rexurrect knows; it knows {}",
@@ -115,16 +123,29 @@ impl Config {
                 }
             }
         }
+        if let Some(unknown) = config
+            .auto_resume
+            .iter()
+            .find(|name| config.programs.get(name).is_none())
+        {
+            return Err(Error::new(format!(
+                "`auto_resume` in {} names {unknown:?}, which no program definition has; \
+                 they are {}",
+                path.display(),
+                config.programs.names().collect::<Vec<_>>().join(", ")
+            )));
+        }
         Ok(config)
     }
 }
 
 /// Every key the file can set.
-const KEYS: [&str; 4] = [
+const KEYS: [&str; 5] = [
     "keep",
     "no_scrollback",
     "ready_timeout",
     "app_session_watch",
+    "auto_resume",
 ];
 
 const SECONDS_WANTED: &str = "a whole number of seconds, at least 1";
@@ -328,6 +349,7 @@ mod tests {
         assert_eq!(config.no_scrollback.names(), ["claude"]);
         assert_eq!(config.ready_timeout, Duration::from_secs(60));
         assert_eq!(config.app_session_watch, Duration::from_secs(30));
+        assert!(config.auto_resume.is_empty());
     }
 
     #[test]
@@ -336,13 +358,26 @@ mod tests {
             "keep = 3\n\
              no_scrollback = [\"claude\", \"aider\"]\n\
              ready_timeout = 5\n\
-             app_session_watch = 7\n",
+             app_session_watch = 7\n\
+             auto_resume = [\"nvim\", \"claude\"]\n",
         )
         .unwrap();
         assert_eq!(config.retention.keep(), 3);
         assert_eq!(config.no_scrollback.names(), ["claude", "aider"]);
         assert_eq!(config.ready_timeout, Duration::from_secs(5));
         assert_eq!(config.app_session_watch, Duration::from_secs(7));
+        assert_eq!(config.auto_resume, ["nvim", "claude"]);
+    }
+
+    #[test]
+    fn an_unknown_program_in_auto_resume_is_an_error_naming_it() {
+        let error = error("auto_resume = [\"nvim\", \"emacs\"]");
+        assert!(
+            error.contains("/c/config.toml")
+                && error.contains("`auto_resume`")
+                && error.contains("\"emacs\""),
+            "{error}"
+        );
     }
 
     #[test]
@@ -363,6 +398,7 @@ mod tests {
             ("ready_timeout = 0", "ready_timeout"),
             ("ready_timeout = \"soon\"", "ready_timeout"),
             ("app_session_watch = 1.5", "app_session_watch"),
+            ("auto_resume = \"nvim\"", "auto_resume"),
         ] {
             let error = error(text);
             assert!(

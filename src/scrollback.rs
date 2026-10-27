@@ -266,8 +266,8 @@ fn terminal_scrollback(rex: &Rex, block: &BlockRef) -> Result<Option<String>, Re
 /// Rex runs [`REPLAY_SCRIPT`] instead (`shell: "none"` and `login: false`
 /// make Rex run the command as given, with no shell of its own around it,
 /// so no startup file runs twice). The script prints the file, then starts
-/// the shell exactly as Rex would. `initial_input` is unchanged: the last
-/// command is typed, never run.
+/// the shell exactly as Rex would. `initial_input` is unchanged: what
+/// restore types is typed, and run only if it auto-resumes (see `resume`).
 pub struct Replay {
     store: ScrollbackStore,
     account: Option<Account>,

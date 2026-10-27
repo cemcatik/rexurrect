@@ -297,7 +297,8 @@ resume a program through its **program definition**. At each save, a block whose
 program matches a definition (by the name it was run by or its executable's name, as
 `no_scrollback` matches) is saved as resumable. At restore, the definition builds the program's
 resume command, which is typed at the block's prompt in place of its last command, and **never
-run**: press Enter to resume.
+run**: press Enter to resume. Programs you list in `auto_resume` come back running instead (see
+[Auto-resume](#auto-resume)).
 
 Only the program running at the save resumes. A block where you had quit Neovim before the save
 comes back with its last command, even if that command is `nvim init.lua`. A block that can't
@@ -378,6 +379,35 @@ conversation>` typed. The command drops any flags `claude` was started with. A b
 its last command. If two blocks were in one conversation, only the first, in layout order, gets
 the resume command, so two Claude Codes never write to one conversation.
 
+### Auto-resume
+
+By default, restore never runs anything: every resume command is typed for you to run. Programs
+you list in `auto_resume` in the [config file](#settings) **auto-resume**: restore types their
+resume command followed by Enter, so they come back running.
+
+```toml
+auto_resume = ["claude", "nvim"]
+```
+
+The list is empty by default, so nothing runs that didn't before until you add a program to it
+(see [ADR-0006](docs/adr/0006-auto-resume-runs-commands-opt-in.md) for why). It takes effect at
+the next restore, with nothing to reinstall.
+
+An auto-resumed program runs in the block's shell, as if you had pressed Enter: it's in your
+shell's history, the recorder records it as the block's last command, and when you quit it
+you're at your prompt in the block's directory.
+
+A listed program that can't resume (Claude Code that reported no conversation, Neovim without
+a `Session.vim`, or a second block in a conversation another block resumes) still comes back
+running: restore runs its own command line as it was at the save (`nvim src/main.rs`,
+`claude --model opus`), so it comes back without its old state. Never the block's last command,
+which may only have started it: a block where `make edit` or `git commit` opened Neovim never
+reruns `make edit` or `git commit`. A program whose command line couldn't be read at the save
+(one with a line break in an argument, say) gets its last command typed instead.
+
+An auto-resumed program starts as soon as restore creates its block, which, under auto-restore,
+may be before the Rex app has attached to the server.
+
 ## Settings
 
 rexurrect reads its settings from one file, `~/.config/rexurrect/config.toml`, or
@@ -394,6 +424,8 @@ no_scrollback = ["claude"]
 ready_timeout = 60
 # How long auto-restore looks for the app session after restoring, in seconds.
 app_session_watch = 30
+# The programs that come back running, not just typed (see Resuming programs); [] for none.
+auto_resume = []
 ```
 
 Manual runs, autosave and auto-restore all read the same file, at every run, so an edit takes
