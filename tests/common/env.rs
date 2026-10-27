@@ -23,16 +23,22 @@ const INHERITED_VARS: &[&str] = &[
 /// Variable the binary reads for its state directory override.
 pub const STATE_DIR_VAR: &str = "REXURRECT_STATE_DIR";
 
-/// Variable the binary reads for how long auto-restore looks for the app
-/// session after restoring, in seconds.
-pub const APP_SESSION_WATCH_VAR: &str = "REXURRECT_APP_SESSION_WATCH";
+/// Variable the binary reads for its config file.
+pub const CONFIG_VAR: &str = "REXURRECT_CONFIG";
+
+/// The harness's config file, unless a test writes its own (see
+/// [`TestEnv::write_config`]): auto-restore looks for the app session for
+/// one second, not 30, so a test waiting for its log entry doesn't wait
+/// half a minute.
+const HARNESS_CONFIG: &str = "app_session_watch = 1\n";
 
 /// The system directories, and no `rex`: the `PATH` launchd gives its agents.
 pub const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 /// One test's isolated world: a short temp directory holding rexurrect's
-/// state directory, the harness `ZDOTDIR`, scratch directories for fixture
-/// blocks, and one directory per throwaway server started from it.
+/// state directory and config file, the harness `ZDOTDIR`, scratch
+/// directories for fixture blocks, and one directory per throwaway server
+/// started from it.
 ///
 /// Servers started from the same `TestEnv` share its state directory, so a
 /// test can save on one server and restore on another, like a real restart.
@@ -75,6 +81,7 @@ impl TestEnvBuilder {
             own_home: self.own_home,
         };
         self.zsh.write(&env.zdotdir());
+        env.write_config(HARNESS_CONFIG);
         for dir in [
             env.home(),
             env.state_dir(),
@@ -116,6 +123,19 @@ impl TestEnv {
     /// [`STATE_DIR_VAR`] to the binary and to every block shell).
     pub fn state_dir(&self) -> PathBuf {
         self.root().join("state")
+    }
+
+    /// rexurrect's config file for this test (passed through [`CONFIG_VAR`]
+    /// to the binary and to every block shell and server).
+    pub fn config_path(&self) -> PathBuf {
+        self.root().join("config.toml")
+    }
+
+    /// Replaces the config file with `toml`, the harness's own settings
+    /// included: a test that turns auto-restore on and wants it to look for
+    /// the app session for less than 30 seconds sets `app_session_watch`.
+    pub fn write_config(&self, toml: &str) {
+        std::fs::write(self.config_path(), toml).unwrap();
     }
 
     /// Writes a block's recorder file the way any recorder would (the format
@@ -318,9 +338,8 @@ impl TestEnv {
     /// an empty temp dir makes any such fallback fail instead of reaching the
     /// user's real server.
     ///
-    /// Auto-restore looks for the app session for one second, not 30, so a
-    /// test waiting for its log entry doesn't wait half a minute. A server
-    /// can set a longer watch with `.env(...)`.
+    /// The config file is the test's own ([`TestEnv::config_path`]), never
+    /// the user's.
     pub(crate) fn child_env(&self) -> BTreeMap<OsString, OsString> {
         let mut env = BTreeMap::new();
         for var in INHERITED_VARS {
@@ -341,7 +360,7 @@ impl TestEnv {
         set("XDG_CONFIG_HOME", self.xdg_dir("config").as_os_str());
         set("XDG_DATA_HOME", self.xdg_dir("data").as_os_str());
         set("XDG_CACHE_HOME", self.xdg_dir("cache").as_os_str());
-        set(APP_SESSION_WATCH_VAR, OsStr::new("1"));
+        set(CONFIG_VAR, self.config_path().as_os_str());
         env
     }
 }

@@ -52,9 +52,8 @@ fn env_with_own_home() -> TestEnv {
 /// A server whose auto-restore, once turned on, looks for the app session
 /// for `seconds` after restoring.
 fn server_watching_for(env: &TestEnv, seconds: u64) -> Server {
-    env.server()
-        .env(APP_SESSION_WATCH_VAR, seconds.to_string())
-        .start()
+    env.write_config(&format!("app_session_watch = {seconds}\n"));
+    env.start_server()
 }
 
 /// An untouched session: one shell block in home, created the way the Rex
@@ -109,10 +108,11 @@ fn the_printed_hook_is_one_line_that_runs_rexurrect_without_a_shell() {
         printed,
         format!(
             "do local r = rex.exec({{ [[{bin}]], \"auto-restore\" }}, \
-             {{ env = {{ REXURRECT_STATE_DIR = [[{state}]] }} }}) \
+             {{ env = {{ REXURRECT_STATE_DIR = [[{state}]], REXURRECT_CONFIG = [[{config}]] }} }}) \
              if r then io.stderr:write(r.stderr) end end\n",
             bin = common::rexurrect::bin(),
             state = env.state_dir().display(),
+            config = env.config_path().display(),
         )
     );
 }
@@ -257,10 +257,10 @@ fn if_the_server_never_becomes_ready_the_background_restore_gives_up_and_logs_it
     let env = TestEnv::new();
     env.saved_on_an_earlier_server(&["zz-proj"]);
     let go = env.root().join("go");
+    env.write_config("app_session_watch = 1\nready_timeout = 1\n");
     let mut server = env
         .server()
         .init_lua(format!("{}{}", hook(&env), held_until(&go)))
-        .env("REXURRECT_READY_TIMEOUT", "1")
         .start_without_waiting();
     let entries = wait_for_auto_restores(&env, 1);
 
@@ -342,6 +342,77 @@ fn the_printed_hook_restores_from_the_state_directory_it_was_printed_with() {
     assert_eq!(server.sorted_labels(), ["zz-proj"]);
 }
 
+/// Like the state directory, the hook pins the config file the user's
+/// shells read, but not its settings: the server's environment names
+/// another file, and the user's file is edited after the hook was printed.
+#[test]
+fn the_printed_hook_reads_the_config_file_it_was_printed_with_as_it_is_at_the_start() {
+    let env = TestEnv::new();
+    env.saved_on_an_earlier_server(&["zz-proj"]);
+    // The user's shells: no REXURRECT_CONFIG, an XDG_CONFIG_HOME of their
+    // own.
+    let xdg_config_home = env.root().join("user-xdg-config");
+    let printed = env
+        .rexurrect_at("unix:///tmp/rxt-none/s.sock")
+        .env_remove(CONFIG_VAR)
+        .env("XDG_CONFIG_HOME", &xdg_config_home)
+        .args(["auto-restore", "--print-hook"])
+        .run()
+        .assert_success();
+    let users = xdg_config_home.join("rexurrect/config.toml");
+    std::fs::create_dir_all(users.parent().unwrap()).unwrap();
+    std::fs::write(&users, "app_session_watch = 1\nready_timeout = 1\n").unwrap();
+    // The server's environment names a file auto-restore would refuse.
+    env.write_config("ready_timeout = \"soon\"\n");
+    let go = env.root().join("go");
+
+    let mut server = env
+        .server()
+        .init_lua(format!("{}{}", printed.stdout, held_until(&go)))
+        .start_without_waiting();
+    let entries = wait_for_auto_restores(&env, 1);
+
+    assert!(entries[0].contains("ready after 1s"), "{entries:#?}");
+    std::fs::write(&go, "").unwrap();
+    server.wait_until_ready();
+}
+
+/// An init.lua line edited by hand, or a server started from a shell, may
+/// still set a variable whose setting moved into the config file.
+#[test]
+fn a_moved_variable_in_the_servers_environment_is_ignored_and_logged_once() {
+    let env = TestEnv::new();
+    env.saved_on_an_earlier_server(&["zz-proj"]);
+
+    let server = env
+        .server()
+        .init_lua(hook(&env))
+        .env("REXURRECT_READY_TIMEOUT", "soon")
+        .start();
+    let entries = wait_for("auto-restore's outcome in the log", || {
+        let entries = env.log_entries();
+        entries
+            .iter()
+            .any(|e| e.contains("auto-restore into"))
+            .then_some(entries)
+    });
+
+    assert_eq!(server.sorted_labels(), ["zz-proj"]);
+    let warning = format!(
+        "auto-restore warning: REXURRECT_READY_TIMEOUT is no longer read: \
+         set ready_timeout = \"soon\" in {}",
+        env.config_path().display()
+    );
+    let warnings: Vec<_> = entries.iter().filter(|e| e.contains("warning")).collect();
+    assert_eq!(warnings.len(), 1, "{entries:#?}");
+    assert!(warnings[0].ends_with(&warning), "{entries:#?}");
+    assert!(
+        server.log().contains("REXURRECT_READY_TIMEOUT"),
+        "{}",
+        server.log()
+    );
+}
+
 #[test]
 fn rex_config_check_runs_the_hook_but_nothing_is_restored_or_closed() {
     let env = env_with_own_home();
@@ -374,14 +445,14 @@ fn an_auto_restore_that_fails_at_once_says_why_in_the_servers_log() {
     let env = TestEnv::new();
     env.saved_on_an_earlier_server(&["zz-proj"]);
 
-    let server = env
-        .server()
-        .init_lua(hook(&env))
-        .env("REXURRECT_READY_TIMEOUT", "soon")
-        .start();
+    env.write_config("ready_timeout = \"soon\"\n");
+    let server = env.server().init_lua(hook(&env)).start();
 
     let log = server.log();
-    assert!(log.contains("REXURRECT_READY_TIMEOUT"), "{log}");
+    assert!(
+        log.contains("`ready_timeout`") && log.contains(&env.config_path().display().to_string()),
+        "{log}"
+    );
     assert_eq!(server.sessions(), []);
 }
 
@@ -638,12 +709,8 @@ fn an_auto_restore_in_which_every_session_failed_before_being_created_closes_not
         env.save(&before);
     }
     // Refuses a second window in any session, so zz-wide can't come back.
-    let server = env
-        .server()
-        .arg("--max-windows")
-        .arg("1")
-        .env(APP_SESSION_WATCH_VAR, "2")
-        .start();
+    env.write_config("app_session_watch = 2\n");
+    let server = env.server().arg("--max-windows").arg("1").start();
     untouched_session(&server, "zz-app");
 
     turn_on_auto_restore(&env, &server);
@@ -783,24 +850,20 @@ fn timestamp_of(entry: &str) -> &str {
 }
 
 /// Checked before auto-restore carries on in the background, like
-/// `REXURRECT_READY_TIMEOUT`. There's no 0, so it can't keep the app
-/// session.
+/// `ready_timeout`. There's no 0, so it can't keep the app session.
 #[test]
 fn an_app_session_watch_other_than_a_whole_number_of_seconds_from_1_is_refused_in_the_servers_log()
 {
     let env = TestEnv::new();
     env.saved_on_an_earlier_server(&["zz-proj"]);
 
-    for watch in ["0", "soon", "1.5"] {
-        let server = env
-            .server()
-            .init_lua(hook(&env))
-            .env(APP_SESSION_WATCH_VAR, watch)
-            .start();
+    for watch in ["0", "\"soon\"", "1.5"] {
+        env.write_config(&format!("app_session_watch = {watch}\n"));
+        let server = env.server().init_lua(hook(&env)).start();
 
         let log = server.log();
         assert!(
-            log.contains(APP_SESSION_WATCH_VAR) && log.contains(&format!("{watch:?}")),
+            log.contains("`app_session_watch`") && log.contains(&format!("not {watch}")),
             "{watch}: {log}"
         );
         assert_eq!(server.sessions(), [], "{watch}");

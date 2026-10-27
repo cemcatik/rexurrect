@@ -22,6 +22,22 @@ pub enum Command {
     Version,
 }
 
+impl Command {
+    /// The command's name, for warnings and the log; `None` for help and
+    /// the version, which read nothing.
+    pub fn name(&self) -> Option<&'static str> {
+        match self {
+            Command::Save => Some("save"),
+            Command::Restore(_) => Some("restore"),
+            Command::List => Some("list"),
+            Command::Autosave(AutosaveCommand::Install(_)) => Some("autosave install"),
+            Command::Autosave(AutosaveCommand::Uninstall) => Some("autosave uninstall"),
+            Command::AutoRestore(_) => Some("auto-restore"),
+            Command::Help | Command::Version => None,
+        }
+    }
+}
+
 pub const USAGE: &str = "\
 Save Rex sessions and recreate them after the Rex server stops.
 
@@ -51,7 +67,8 @@ Autosave install options:
 
 Auto-restore options:
   --print-hook        Print the line that turns auto-restore on, to append to
-                      Rex's init.lua; it pins this state directory
+                      Rex's init.lua; it pins this state directory and
+                      config file
   --server-pid <pid>  Wait for the Rex server with this pid and restore into
                       it, in the foreground (what the background run does)
 
@@ -59,17 +76,20 @@ Options:
   -h, --help     Show this help
   -V, --version  Show the version
 
+Settings, in the config file $XDG_CONFIG_HOME/rexurrect/config.toml, else
+~/.config/rexurrect/config.toml (TOML; no file means every default):
+  keep = 10                   How many snapshots save keeps, newest first
+  no_scrollback = [\"claude\"]  Programs whose blocks save keeps no scrollback
+                              for
+  ready_timeout = 60          How long auto-restore waits for the Rex server
+                              to be ready, in seconds
+
 Environment:
-  REX_SERVER               The Rex server to talk to (default: rex's own default)
-  REXURRECT_STATE_DIR      Where snapshots and state live (default:
-                           $XDG_STATE_HOME/rexurrect, else
-                           ~/.local/state/rexurrect)
-  REXURRECT_KEEP           How many snapshots save keeps, newest first
-                           (default: 10)
-  REXURRECT_NO_SCROLLBACK  Programs, separated by spaces, whose blocks save
-                           keeps no scrollback for (default: claude)
-  REXURRECT_READY_TIMEOUT  How long auto-restore waits for the Rex server to
-                           be ready, in seconds (default: 60)
+  REX_SERVER           The Rex server to talk to (default: rex's own default)
+  REXURRECT_STATE_DIR  Where snapshots and state live (default:
+                       $XDG_STATE_HOME/rexurrect, else
+                       ~/.local/state/rexurrect)
+  REXURRECT_CONFIG     The config file to read instead
 ";
 
 #[derive(Debug)]

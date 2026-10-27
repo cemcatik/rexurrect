@@ -108,7 +108,7 @@ rexurrect list      # list the snapshots, newest first
   and block labels are recorded only if you set them; windows and blocks with Rex's default
   labels get fresh default labels on restore, not stale copies like `Window 1a2b3c4d`. Each
   save is a new timestamped snapshot; `latest.json` points at the newest. The newest 10
-  snapshots are kept (set `REXURRECT_KEEP` to keep a different number).
+  snapshots are kept (set `keep` in the [config file](#settings) to keep a different number).
   - Untouched sessions are left out: one window holding one shell, with Rex's default window
     and block labels, still in your home directory, and no last command. Sessions that Rex or
     you create and then abandon therefore don't pile up across restarts. A session's own label
@@ -155,16 +155,16 @@ and reflows when you resize the block. A block that was showing a full-screen pr
 a frozen picture of the program; its command still comes back typed at the prompt.
 
 Some programs draw their interface on the main screen instead, where Rex can't tell it from
-earlier output. A block running one of the programs listed in `REXURRECT_NO_SCROLLBACK` gets
-no scrollback either. The list holds program names separated by spaces, matched against the name
-the program was run by (`claude`) and the name of its executable. It defaults to `claude` (Claude
-Code); set it to replace the default, or to an empty string for no programs:
+earlier output. A block running one of the programs listed in `no_scrollback` in the
+[config file](#settings) gets no scrollback either. The list holds program names, matched against
+the name the program was run by (`claude`) and the name of its executable. It defaults to
+`["claude"]` (Claude Code); set it to replace the default, or to `[]` for no programs:
 
-```sh
-export REXURRECT_NO_SCROLLBACK="claude aider"
+```toml
+no_scrollback = ["claude", "aider"]
 ```
 
-Set it where `save` sees it, and run `autosave install` again afterwards, so autosave uses it too.
+Autosave reads the same file, so it uses the new list from its next run.
 
 A block whose scrollback is too large for Rex to hand over (Rex caps one response at 1 MB, which a
 few thousand lines of coloured output can fill) is saved without it, and the save carries on: it
@@ -269,7 +269,8 @@ entries of sessions that no longer exist, so the directory doesn't grow forever.
 fails or writes nothing removes nothing. `scrollback/` holds each snapshot's block scrollback,
 which goes when its snapshot goes (or two minutes after a restore from it, if that's later); a
 block with 50,000 lines of output takes about 340 KB per snapshot. `rexurrect.log` is the log of
-failures, auto-restore outcomes and blocks saved without scrollback because it was too large.
+failures, auto-restore outcomes, blocks saved without scrollback because it was too large, and
+warnings about [settings that moved](#moving-from-environment-variables).
 The recorder finds the state directory the same way, so set `REXURRECT_STATE_DIR` (if you
 use it) where both your shells and rexurrect see it.
 Autosave and auto-restore run outside your shells, so `autosave install` and
@@ -282,6 +283,73 @@ rexurrect writes its own files with mode `0600`, and the recorder keeps its file
 rename), so a crash never leaves a partial snapshot or record behind; the log is appended to.
 A temporary file that a crash does leave behind is removed by the next save that writes a
 snapshot, once it has gone unchanged for an hour.
+
+## Settings
+
+rexurrect reads its settings from one file, `~/.config/rexurrect/config.toml`, or
+`$XDG_CONFIG_HOME/rexurrect/config.toml` if `XDG_CONFIG_HOME` is an absolute path. Set
+`REXURRECT_CONFIG` to use another file. You don't need one: with no file, every setting has its
+default. This is every setting, each set to its default:
+
+```toml
+# How many snapshots save keeps, newest first: a whole number, at least 1.
+keep = 10
+# The programs whose blocks save keeps no scrollback for (see Usage); [] for none.
+no_scrollback = ["claude"]
+# How long auto-restore waits for the Rex server to be ready, in seconds.
+ready_timeout = 60
+# How long auto-restore looks for the app session after restoring, in seconds.
+app_session_watch = 30
+```
+
+Manual runs, autosave and auto-restore all read the same file, at every run, so an edit takes
+effect the next time any of them runs, with nothing to reinstall. Autosave and auto-restore run
+outside your shells, so `autosave install` and `auto-restore --print-hook` pin the file's path
+as they find it, the way they pin the state directory: its path, never its settings. Run them
+again after moving the file or changing `REXURRECT_CONFIG` or `XDG_CONFIG_HOME`.
+
+A file rexurrect can't use (one it can't read, one that isn't TOML, a key it doesn't know, a
+value of the wrong kind) fails the run with an error naming the file and the key. Under autosave
+and auto-restore, the error goes to `rexurrect.log` like any other failure.
+
+Two settings stay environment variables, because the zsh recorder reads them and it can't read
+TOML:
+
+- `REXURRECT_STATE_DIR` (see [Where state lives](#where-state-lives)): the recorder finds the
+  state directory itself, at every command and without starting another program, and it and
+  rexurrect must agree on it;
+- `REXURRECT_IGNORE` (see [The ignore list](#the-ignore-list)): only the recorder reads it, so it
+  belongs in `~/.zshrc`.
+
+`REX_SERVER` and `REXURRECT_CONFIG` are variables too, and so are the overrides for testing under
+[Development](#development).
+
+### Moving from environment variables
+
+Earlier versions of rexurrect read these settings from environment variables. It no longer reads
+them: move each one you set into the file.
+
+| Was                                      | Now                                   |
+| ---------------------------------------- | ------------------------------------- |
+| `REXURRECT_KEEP=30`                      | `keep = 30`                           |
+| `REXURRECT_NO_SCROLLBACK="claude aider"` | `no_scrollback = ["claude", "aider"]` |
+| `REXURRECT_READY_TIMEOUT=120`            | `ready_timeout = 120`                 |
+| `REXURRECT_APP_SESSION_WATCH=10`         | `app_session_watch = 10`              |
+
+While one is still set, every run warns, naming the line to put in the file instead:
+
+```
+rexurrect: REXURRECT_KEEP is no longer read: set keep = 30 in /Users/you/.config/rexurrect/config.toml
+```
+
+On a terminal the warning goes to stderr; under autosave and auto-restore, to `rexurrect.log`.
+Once you've moved them, remove them from `~/.zshrc` (and from the auto-restore line's `env`, if
+you added them there), then:
+
+- run `autosave install` once: an agent installed by an earlier rexurrect carries the variables
+  it copied when you installed it, and warns at every autosave until you reinstall it;
+- replace the auto-restore line in `init.lua` with the one `auto-restore --print-hook` prints
+  now, which pins the config file's path (see [Auto-restore](#auto-restore)).
 
 ## Autosave
 
@@ -305,7 +373,7 @@ started server, autosave restores before it saves, like any `save`.
 
 launchd starts the agent with almost no environment: no `REX_SERVER`, a bare `PATH`, nothing
 from your shell config. So `autosave install` writes into the agent what `save` needs, as it
-finds it when you run it, and prints the server and state directory it chose:
+finds it when you run it, and prints the server, state directory and config file it chose:
 
 - **the server**: `REX_SERVER` if set, so run it from a Rex block to save the server that block
   is on. Otherwise the Rex app's server,
@@ -314,7 +382,8 @@ finds it when you run it, and prints the server and state directory it chose:
   up on another one;
 - **the state directory**, resolved as above, so autosave shares snapshots with your manual
   runs and the recorder;
-- `REXURRECT_KEEP` and `REXURRECT_NO_SCROLLBACK`, if set.
+- **the config file's path**, resolved as in [Settings](#settings). Its path, not its settings:
+  each autosave reads the file as it is then, so an edit reaches the next autosave.
 
 Run `autosave install` again after changing any of these, or after moving `rexurrect`.
 
@@ -419,15 +488,17 @@ mkdir -p ~/.config/rex &&
 The line reads
 
 ```lua
-do local r = rex.exec({ [[/Users/you/.cargo/bin/rexurrect]], "auto-restore" }, { env = { REXURRECT_STATE_DIR = [[/Users/you/.local/state/rexurrect]] } }) if r then io.stderr:write(r.stderr) end end
+do local r = rex.exec({ [[/Users/you/.cargo/bin/rexurrect]], "auto-restore" }, { env = { REXURRECT_STATE_DIR = [[/Users/you/.local/state/rexurrect]], REXURRECT_CONFIG = [[/Users/you/.config/rexurrect/config.toml]] } }) if r then io.stderr:write(r.stderr) end end
 ```
 
 The server runs it in its own environment, not your shell's: the Rex app starts its server with
 a bare `PATH` and no `XDG_*` variables. So the line names `rexurrect` by its full path, and
-pins the state directory as it was resolved when you printed it (see
-[Where state lives](#where-state-lives)), so auto-restore uses the same snapshots as your shells
-and their recorder. Print the line again, replacing the old one, after moving `rexurrect` or
-changing `REXURRECT_STATE_DIR` or `XDG_STATE_HOME`.
+pins the state directory and the config file as they were resolved when you printed it (see
+[Where state lives](#where-state-lives) and [Settings](#settings)), so auto-restore uses the
+same snapshots as your shells and their recorder, and the settings you edit. It pins the config
+file's path, not its settings: an edit takes effect at the server's next start. Print the line
+again, replacing the old one, after moving `rexurrect` or changing `REXURRECT_STATE_DIR`,
+`XDG_STATE_HOME`, `REXURRECT_CONFIG` or `XDG_CONFIG_HOME`.
 
 **If your `init.lua` has an `os.execute(...)` line** that runs `rexurrect auto-restore`, the
 line `--print-hook` printed before Rex build 1203, replace it with the line it prints now. Rex
@@ -455,15 +526,15 @@ until `init.lua` has finished, and carries on in the background:
   (next point), that there was nothing to do, or why it gave up, plus a line for each failure.
   A run that created sessions adds its line once it stops looking for the app session, up to
   30 seconds after restoring. If the server isn't ready within 60 seconds, it gives up and
-  logs that. Set `REXURRECT_READY_TIMEOUT` (seconds) in the
-  server's environment, or in the line's `env`, to wait longer. A failure before it carries on
-  in the background (a `REXURRECT_READY_TIMEOUT` that isn't a number, say) goes to the server's
-  own log too.
+  logs that. Set `ready_timeout` (seconds) in the [config file](#settings) to wait longer. A
+  failure before it carries on in the background (a config file it can't use, say) goes to the
+  server's own log too.
 - The Rex app creates a session of its own when it finds the server with no sessions, even
   while auto-restore is creating yours, so every restart would leave this app session, untouched,
   beside them. Once auto-restore has created sessions, it closes that app session: it looks for 30
   seconds after restoring, and closes the first live session it finds that restore didn't
-  create and that's untouched (see [Usage](#usage)), the earliest if there are several. It
+  create and that's untouched (see [Usage](#usage)), the earliest if there are several
+  (`app_session_watch` in the [config file](#settings) sets how long it looks). It
   closes at most one per server instance, and names it in `rexurrect.log`. A session you open
   yourself in those 30 seconds and haven't used yet looks just like the app's, so if the app's
   doesn't turn up first, yours is closed instead; nothing in it was worth restoring. An app
@@ -491,7 +562,8 @@ cargo clippy --all-targets -- -D warnings
 
 The integration tests run the built binary against throwaway Rex servers, so they need the
 `rex` CLI on `PATH` (or its path in `REX_BIN`). Each test starts its own server under
-`/tmp/rxt.*` with its own state directory and a minimal zsh config, and stops it afterwards.
+`/tmp/rxt.*` with its own state directory, config file and minimal zsh config, and stops it
+afterwards.
 They never touch your real Rex server, sessions or snapshots. The shared harness is in
 `tests/common/`.
 
@@ -515,9 +587,8 @@ To build for Linux (a static binary; every dependency is pure Rust), add
 `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld` and run
 `cargo build --release --target x86_64-unknown-linux-musl`.
 
-`REXURRECT_APP_SESSION_WATCH` sets how long auto-restore looks for the app session after
-restoring: a whole number of seconds, at least 1, 30 by default. The tests give every
-throwaway server 1, so a test waiting for auto-restore's entry in the log doesn't wait half a
-minute.
+Each test's config file (`REXURRECT_CONFIG`) sets `app_session_watch = 1`, so a test waiting
+for auto-restore's entry in the log doesn't wait half a minute. A test that sets other settings
+writes its own file in its place.
 
 Terms (session, window, block, label, lineage, ...) follow [GLOSSARY.md](GLOSSARY.md).

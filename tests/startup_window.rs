@@ -113,12 +113,9 @@ fn saves_keeping_one_snapshot_keep_the_scrollback_a_restore_in_its_startup_windo
         let server = env.start_server();
         env.restore(&server);
         wait_for_slow_startup(&server);
+        env.write_config("keep = 1\n");
         for _ in 0..2 {
-            env.rexurrect(&server)
-                .arg("save")
-                .env("REXURRECT_KEEP", "1")
-                .run()
-                .assert_success();
+            env.save(&server);
         }
     }
     assert_restored_as_first_saved(&env, &layout);

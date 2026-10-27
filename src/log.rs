@@ -2,12 +2,14 @@
 //!
 //! `save` and `restore` append their failures here, one timestamped line
 //! each, so a failed autosave, which nobody watches, can still be diagnosed.
-//! Successful runs write nothing, with two exceptions:
+//! Successful runs write nothing, with three exceptions:
 //! - auto-restore, which nobody watches either, logs every outcome;
 //! - save logs each block it starts saving without scrollback because Rex
 //!   refused to hand it over as too large: the save succeeds, but that
 //!   block's scrollback is lost. Once per block, not at every save while it
-//!   stays too large (see `too_large`).
+//!   stays too large (see `too_large`);
+//! - a run whose stderr isn't a terminal logs each moved variable it finds
+//!   set (see `config`): nobody sees an autosave's stderr either.
 
 use std::fmt::Display;
 use std::fs::OpenOptions;
@@ -102,5 +104,14 @@ pub fn log_failure(state: &StateDir, command: &str, failure: &dyn Display) {
 pub fn log_fallback(state: &StateDir, command: &str, fallback: &dyn Display) {
     if let Err(e) = Log::new(state).append(&format!("{command} fell back: {fallback}")) {
         eprintln!("rexurrect: couldn't log a fallback: {e}");
+    }
+}
+
+/// Appends "`<command>` warning: `<warning>`" to the log in `state`:
+/// something `command` carried on despite, which the user should still fix.
+/// Best effort, like [`log_failure`].
+pub fn log_warning(state: &StateDir, command: &str, warning: &dyn Display) {
+    if let Err(e) = Log::new(state).append(&format!("{command} warning: {warning}")) {
+        eprintln!("rexurrect: couldn't log a warning: {e}");
     }
 }

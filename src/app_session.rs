@@ -19,6 +19,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::capture::{self, CaptureContext};
+use crate::config::Config;
 use crate::error::Result;
 use crate::lineage::LineageMap;
 use crate::process;
@@ -26,22 +27,12 @@ use crate::rex::api::{ServerStatus, SessionSummary};
 use crate::rex::{Rex, RexError};
 use crate::save;
 use crate::scrollback::NoScrollbackPrograms;
-use crate::settings;
 use crate::startup::StartingSessions;
 use crate::state::StateDir;
 use crate::timestamp::Timestamp;
 
-/// How long auto-restore looks for the app session after restoring, in
-/// seconds. Only tests set it.
-const WATCH_VAR: &str = "REXURRECT_APP_SESSION_WATCH";
-const DEFAULT_WATCH: Duration = Duration::from_secs(30);
 /// The pause between looks.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
-
-/// `REXURRECT_APP_SESSION_WATCH`, or the default of 30 seconds.
-pub fn watch_length() -> Result<Duration> {
-    settings::seconds(WATCH_VAR, DEFAULT_WATCH)
-}
 
 /// A live session taken for the app session.
 #[derive(Debug)]
@@ -70,15 +61,16 @@ pub enum Watched {
 }
 
 /// Looks for the app session on the server `server` (its `server.status`)
-/// describes, about once a second for `watch`, and closes the first it
-/// finds. A look that fails is skipped, and the next one tries again.
+/// describes, about once a second for `config.app_session_watch`, and
+/// closes the first it finds. A look that fails is skipped, and the next one
+/// tries again.
 pub fn close_app_session(
     rex: &Rex,
     state: &StateDir,
     server: &ServerStatus,
-    watch: Duration,
+    config: &Config,
 ) -> Watched {
-    let deadline = Instant::now() + watch;
+    let deadline = Instant::now() + config.app_session_watch;
     loop {
         if !process::is_running(server.pid) {
             return Watched::ServerStopped;
@@ -87,7 +79,9 @@ pub fn close_app_session(
             Err(RexError::NotRunning { .. }) => return Watched::ServerStopped,
             Err(_) => {}
             Ok(live) => {
-                if let Ok(Some(found)) = find_app_session(rex, state, server, &live) {
+                if let Ok(Some(found)) =
+                    find_app_session(rex, state, server, &config.no_scrollback, &live)
+                {
                     return match rex.destroy_session(&found.session_id) {
                         Ok(()) => Watched::Closed(found),
                         Err(e) => Watched::CloseFailed(found, e),
@@ -110,6 +104,7 @@ fn find_app_session(
     rex: &Rex,
     state: &StateDir,
     server: &ServerStatus,
+    no_scrollback: &NoScrollbackPrograms,
     live: &[SessionSummary],
 ) -> Result<Option<AppSession>> {
     // Read at every look: a restore run by hand meanwhile records the
@@ -123,7 +118,7 @@ fn find_app_session(
         &server.host_id,
         taken_at,
         StartingSessions::load(state)?.at(taken_at),
-        NoScrollbackPrograms::from_env()?,
+        no_scrollback.clone(),
     )?;
     for summary in live {
         if lineages.is_restored_session(&summary.session_id) {

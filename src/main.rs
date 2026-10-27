@@ -7,6 +7,7 @@ mod auto_restore;
 mod autosave;
 mod capture;
 mod cli;
+mod config;
 mod create;
 mod defaults;
 mod error;
@@ -46,6 +47,9 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if let Some(name) = command.name() {
+        config::warn_about_moved_variables(name);
+    }
     let result = match command {
         Command::Save => logging_failure("save", save::run()),
         Command::Restore(options) => logging_failure("restore", restore::run(&options)),

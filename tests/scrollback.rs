@@ -233,12 +233,9 @@ fn scrollback_is_private_and_kept_only_as_long_as_its_snapshot() {
     server.wait_for_capture(&fixture.id, block, "the whole sequence", |c| {
         c.contains("\n20000\n")
     });
+    env.write_config("keep = 2\n");
     let save = || {
-        env.rexurrect(&server)
-            .arg("save")
-            .env("REXURRECT_KEEP", "2")
-            .run()
-            .assert_success();
+        env.save(&server);
     };
 
     save();
@@ -447,11 +444,8 @@ fn a_command_block_running_a_listed_program_gets_no_scrollback_replay() {
         server.wait_for_foreground(&fixture.id, block, name);
     }
 
-    env.rexurrect(&server)
-        .env("REXURRECT_NO_SCROLLBACK", "tail")
-        .arg("save")
-        .run()
-        .assert_success();
+    env.write_config("no_scrollback = [\"tail\"]\n");
+    env.save(&server);
     server.kill_session(&fixture.id);
     env.restore(&server);
 
@@ -482,11 +476,8 @@ fn the_programs_whose_blocks_get_no_scrollback_replay_can_be_set() {
     print_then_run(&server, &fixture.id, unlisted, "zz-unlisted", "claude 300");
 
     // The list replaces the default (`claude`).
-    env.rexurrect(&server)
-        .env("REXURRECT_NO_SCROLLBACK", "vim dev-server")
-        .arg("save")
-        .run()
-        .assert_success();
+    env.write_config("no_scrollback = [\"vim\", \"dev-server\"]\n");
+    env.save(&server);
     server.kill_session(&fixture.id);
     env.restore(&server);
 

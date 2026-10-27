@@ -481,29 +481,39 @@ fn the_agent_gets_only_the_system_path_whether_or_not_rex_is_on_path_at_install(
     }
 }
 
+/// Autosave reads the file the user's shells read. The path is pinned,
+/// never the settings, and the moved variables aren't handed on.
 #[test]
-fn install_hands_the_programs_whose_blocks_get_no_scrollback_on_to_autosave() {
+fn install_pins_the_config_file_and_hands_on_no_moved_variable() {
     let env = TestEnv::new();
     let launchd = FakeLaunchd::new(&env);
 
-    launchd
+    let out = launchd
         .aim(env.rexurrect_at(NO_SERVER))
+        .env("REXURRECT_KEEP", "2")
         .env("REXURRECT_NO_SCROLLBACK", "claude aider")
         .args(["autosave", "install"])
         .run()
         .assert_success();
 
     let agent = launchd.the_agent();
+    let environment = agent.environment();
+    let config = env.config_path();
     assert!(
-        agent
-            .environment()
-            .contains(&("REXURRECT_NO_SCROLLBACK", "claude aider")),
+        environment.contains(&(CONFIG_VAR, config.to_str().unwrap())),
         "{agent:?}"
     );
+    assert!(
+        environment
+            .iter()
+            .all(|(var, _)| !["REXURRECT_KEEP", "REXURRECT_NO_SCROLLBACK"].contains(var)),
+        "{agent:?}"
+    );
+    assert!(out.stderr.contains("set keep = 2 in"), "{out}");
 }
 
 #[test]
-fn autosaves_keep_as_many_snapshots_as_install_was_told_to() {
+fn an_edit_to_the_config_file_after_install_reaches_the_next_autosave() {
     let env = TestEnv::new();
     let launchd = FakeLaunchd::new(&env);
     let server = env.start_server();
@@ -511,16 +521,76 @@ fn autosaves_keep_as_many_snapshots_as_install_was_told_to() {
     server.wait_for_pwds(&fixture);
     launchd
         .aim(env.rexurrect(&server))
-        .env("REXURRECT_KEEP", "2")
         .args(["autosave", "install"])
         .run()
         .assert_success();
     let agent = launchd.the_agent();
 
+    env.write_config("keep = 2\n");
     for _ in 0..3 {
         agent.run_as_launchd(&env).assert_success();
     }
 
     let list = env.rexurrect(&server).arg("list").run().assert_success();
     assert_eq!(list.stdout.lines().count(), 2, "{list}");
+}
+
+/// An agent installed before the settings moved still sets the variables.
+/// Nobody sees an autosave's stderr, so it warns in the log.
+#[test]
+fn an_autosave_whose_agent_still_sets_a_moved_variable_ignores_it_and_warns_in_the_log() {
+    let env = TestEnv::new();
+    let launchd = FakeLaunchd::new(&env);
+    let server = env.start_server();
+    let fixture = server.create_session("zz-kept", &[window(shell(env.mkdir("a")))]);
+    server.wait_for_pwds(&fixture);
+    launchd
+        .aim(env.rexurrect(&server))
+        .args(["autosave", "install"])
+        .run()
+        .assert_success();
+    let agent = launchd.the_agent();
+    let mut old_environment = agent.environment();
+    old_environment.push(("REXURRECT_KEEP", "1"));
+
+    for _ in 0..2 {
+        run_job(
+            &env,
+            "launchd",
+            &agent.program_arguments(),
+            &["USER", "LOGNAME", "SHELL", "TMPDIR"],
+            old_environment.clone(),
+        )
+        .assert_success();
+    }
+
+    let list = env.rexurrect(&server).arg("list").run().assert_success();
+    assert_eq!(list.stdout.lines().count(), 2, "{list}");
+    let warning = format!(
+        "save warning: REXURRECT_KEEP is no longer read: set keep = 1 in {}",
+        env.config_path().display()
+    );
+    let entries = env.log_entries();
+    assert_eq!(entries.len(), 2, "{entries:#?}");
+    assert!(
+        entries.iter().all(|e| e.ends_with(&warning)),
+        "{entries:#?}"
+    );
+}
+
+/// Checked at install, so it doesn't fail every autosave instead.
+#[test]
+fn a_config_file_rexurrect_cannot_use_installs_nothing() {
+    let env = TestEnv::new();
+    let launchd = FakeLaunchd::new(&env);
+    env.write_config("keep = 0\n");
+
+    let out = launchd
+        .aim(env.rexurrect_at(NO_SERVER))
+        .args(["autosave", "install"])
+        .run()
+        .assert_failure();
+
+    assert!(out.stderr.contains("`keep`"), "{out}");
+    assert_eq!(plists_in(&launchd.agents_dir()).len(), 0);
 }

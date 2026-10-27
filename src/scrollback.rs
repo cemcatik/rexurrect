@@ -34,7 +34,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::account::Account;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::rex::api::{FormatArgs, TerminalOptions, TerminalProcess};
 use crate::rex::{BlockRef, Rex, RexError};
 use crate::snapshot::SavedBlock;
@@ -43,33 +43,23 @@ use crate::timestamp::Timestamp;
 
 const DIR: &str = "scrollback";
 
-/// The variable listing the programs whose blocks get no scrollback.
-pub const NO_SCROLLBACK_VAR: &str = "REXURRECT_NO_SCROLLBACK";
-
 /// Programs that draw their interface on the main screen, not the alternate
 /// one, and whose blocks therefore get no scrollback: a replay would print a
 /// frozen copy of the interface, as for a full-screen program. Claude Code
-/// (`claude`) is one.
-#[derive(Debug)]
+/// (`claude`) is one, and the only one by default (see `config`).
+#[derive(Debug, Clone)]
 pub struct NoScrollbackPrograms {
     names: Vec<String>,
 }
 
 impl NoScrollbackPrograms {
-    /// `$REXURRECT_NO_SCROLLBACK`: program names separated by spaces.
-    /// `claude` if it's unset; none if it's set but empty.
-    pub fn from_env() -> Result<NoScrollbackPrograms> {
-        let Some(value) = std::env::var_os(NO_SCROLLBACK_VAR) else {
-            return Ok(NoScrollbackPrograms {
-                names: vec!["claude".to_string()],
-            });
-        };
-        let value = value.to_str().ok_or_else(|| {
-            Error::new(format!("{NO_SCROLLBACK_VAR} isn't valid UTF-8: {value:?}"))
-        })?;
-        Ok(NoScrollbackPrograms {
-            names: value.split_whitespace().map(str::to_string).collect(),
-        })
+    pub fn new(names: Vec<String>) -> NoScrollbackPrograms {
+        NoScrollbackPrograms { names }
+    }
+
+    #[cfg(test)]
+    pub fn names(&self) -> &[String] {
+        &self.names
     }
 
     /// Whether the block whose terminal `process` method answered `process`

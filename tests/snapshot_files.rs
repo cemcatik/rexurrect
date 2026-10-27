@@ -10,8 +10,6 @@ use std::os::unix::fs::PermissionsExt;
 use common::files::accessible_to_others;
 use common::*;
 
-const KEEP_VAR: &str = "REXURRECT_KEEP";
-
 /// The snapshots `rexurrect list` shows, newest first, each as its session
 /// labels (`zz-1, zz-2`).
 fn listed_labels(env: &TestEnv, server: &Server) -> Vec<String> {
@@ -64,15 +62,12 @@ fn only_the_newest_snapshots_are_kept_and_latest_is_the_newest() {
     let server = env.start_server();
     let a = env.mkdir("a");
     let mut fixtures = Vec::new();
+    env.write_config("keep = 2\n");
     // Each save holds one more session than the one before.
     for label in ["zz-1", "zz-2", "zz-3"] {
         let fixture = server.create_session(label, &[window(shell(&a))]);
         server.wait_for_pwds(&fixture);
-        env.rexurrect(&server)
-            .arg("save")
-            .env(KEEP_VAR, "2")
-            .run()
-            .assert_success();
+        env.save(&server);
         fixtures.push(fixture);
     }
 
@@ -91,6 +86,8 @@ fn only_the_newest_snapshots_are_kept_and_latest_is_the_newest() {
 #[test]
 fn ten_snapshots_are_kept_by_default() {
     let env = TestEnv::new();
+    // No config file at all.
+    std::fs::remove_file(env.config_path()).unwrap();
     let server = env.start_server();
     let fixture = server.create_session("zz-often", &[window(shell(env.mkdir("a")))]);
     server.wait_for_pwds(&fixture);
@@ -109,14 +106,16 @@ fn a_keep_count_that_is_not_a_positive_number_fails_save_and_writes_nothing() {
     let fixture = server.create_session("zz-kept", &[window(shell(env.mkdir("a")))]);
     server.wait_for_pwds(&fixture);
 
-    for bad in ["0", "ten", "-1"] {
-        let out = env
-            .rexurrect(&server)
-            .arg("save")
-            .env(KEEP_VAR, bad)
-            .run()
-            .assert_failure();
-        assert!(out.stderr.contains(KEEP_VAR), "{out}");
+    for bad in ["0", "\"ten\"", "-1", "1.5"] {
+        env.write_config(&format!("keep = {bad}\n"));
+        let out = env.rexurrect(&server).arg("save").run().assert_failure();
+        assert!(
+            out.stderr.contains("`keep`")
+                && out
+                    .stderr
+                    .contains(&env.config_path().display().to_string()),
+            "{out}"
+        );
     }
 
     assert_eq!(listed_labels(&env, &server), Vec::<String>::new());
