@@ -13,13 +13,14 @@
 //! A program listed in `auto_resume` auto-resumes (ADR-0006): its resume
 //! command is typed followed by Enter, so the block's shell runs it, records
 //! it, and is there when it exits. One that can't resume still comes back
-//! running: its own command line as it was at the save, never the block's
-//! last command, which may only have started it (`make edit`).
+//! running, by default (its definition's `fallback`): its own command line
+//! as it was at the save, never the block's last command, which may only
+//! have started it (`make edit`).
 
 use std::collections::HashSet;
 
 use crate::create;
-use crate::programs::Programs;
+use crate::programs::{Fallback, Programs, StateKind};
 use crate::snapshot::SavedBlock;
 
 /// What restore types at a block's prompt.
@@ -69,9 +70,9 @@ impl<'a> Resuming<'a> {
 
     /// What to type at the prompt of `block`, as restore creates it (see
     /// `create::as_created`): its resume command if it can resume, run if
-    /// its program auto-resumes; else, for a program that auto-resumes, its
-    /// command line from the save, run; else its last command if that can
-    /// be typed; else nothing.
+    /// its program auto-resumes; else, for a program that auto-resumes and
+    /// falls back to its command, its command line from the save, run; else
+    /// its last command if that can be typed; else nothing.
     pub fn input(&mut self, block: &SavedBlock) -> Option<Input> {
         let auto_resumes = block
             .resume
@@ -87,11 +88,17 @@ impl<'a> Resuming<'a> {
         if let Some(command) = self.resume_command(block) {
             return Some(typed_or_run(command));
         }
+        let falls_back_to_command = auto_resumes
+            && block
+                .resume
+                .as_ref()
+                .and_then(|resume| self.programs.get(&resume.program))
+                .is_some_and(|definition| definition.fallback == Fallback::Command);
         let fallback = block
             .resume
             .as_ref()
             .and_then(|resume| resume.command_line.as_deref())
-            .filter(|command| auto_resumes && create::is_typeable(command));
+            .filter(|command| falls_back_to_command && create::is_typeable(command));
         match fallback {
             Some(command) => Some(Input::Run(command.to_string())),
             None => create::typed_command(block).map(|command| Input::Typed(command.to_string())),
@@ -103,7 +110,8 @@ impl<'a> Resuming<'a> {
         let definition = self.programs.get(&resume.program)?;
         let command =
             definition.resume_command(&block.working_directory, resume.state.as_deref())?;
-        if let Some(state) = &resume.state
+        if definition.state != StateKind::None
+            && let Some(state) = &resume.state
             && !self
                 .resumed
                 .insert((definition.name.clone(), state.clone()))
@@ -178,6 +186,19 @@ mod tests {
         );
     }
 
+    /// Only reported state makes two blocks one program's: a definition that
+    /// now expects none resumes in every block, whatever a snapshot saved.
+    #[test]
+    fn blocks_of_a_program_that_reports_no_state_all_resume() {
+        let table: toml::Table = "[programs.nvim]\nrequires_file = \"\"".parse().unwrap();
+        let programs =
+            Programs::configured(&table["programs"], std::path::Path::new("/c")).unwrap();
+        let mut resuming = Resuming::new(&programs, &[]);
+        let nvim = block("nvim", "nvim", Some("stale"), "nvim");
+        assert_eq!(resuming.input(&nvim), typed("nvim -S"));
+        assert_eq!(resuming.input(&nvim), typed("nvim -S"));
+    }
+
     #[test]
     fn a_listed_program_without_a_command_line_to_run_gets_its_last_command_typed() {
         let mut claude = block("claude", "claude", None, "x");
@@ -189,5 +210,16 @@ mod tests {
     fn keystrokes_end_in_enter_only_for_a_command_to_run() {
         assert_eq!(Input::Typed("a".into()).keystrokes(), "a");
         assert_eq!(Input::Run("a".into()).keystrokes(), "a\n");
+    }
+
+    #[test]
+    fn a_listed_program_falling_back_to_none_gets_its_last_command_typed() {
+        let table: toml::Table = "[programs.nvim]\nfallback = \"none\"".parse().unwrap();
+        let programs =
+            Programs::configured(&table["programs"], std::path::Path::new("/c")).unwrap();
+        let auto_resume = vec!["nvim".to_string()];
+        let mut resuming = Resuming::new(&programs, &auto_resume);
+        let nvim = block("make edit", "nvim", None, "nvim src/main.rs");
+        assert_eq!(resuming.input(&nvim), typed("make edit"));
     }
 }

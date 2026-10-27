@@ -98,6 +98,8 @@ Settings, in the config file $XDG_CONFIG_HOME/rexurrect/config.toml, else
                               after restoring, in seconds
   auto_resume = []            Programs restore resumes running, not typed
                               (\"nvim\", \"claude\")
+  [programs.<name>]           A program definition: match, state, resume,
+                              requires_file, fallback, enabled (see README)
 
 Environment:
   REX_SERVER           The Rex server to talk to (default: rex's own default)
