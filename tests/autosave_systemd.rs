@@ -12,9 +12,7 @@
 
 mod common;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use common::*;
 
@@ -37,14 +35,8 @@ impl FakeSystemd {
         for sub in ["bin", "loaded", "enabled", "active", "user", "home"] {
             std::fs::create_dir_all(dir.join(sub)).unwrap();
         }
-        for (name, script) in [
-            ("systemctl", systemctl_script(&dir)),
-            ("launchctl", NO_LAUNCHCTL.to_string()),
-        ] {
-            let path = dir.join("bin").join(name);
-            std::fs::write(&path, script).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        write_script(&dir.join("bin/systemctl"), &systemctl_script(&dir));
+        write_script(&dir.join("bin/launchctl"), NO_LAUNCHCTL);
         FakeSystemd { dir }
     }
 
@@ -281,42 +273,16 @@ impl Units {
     }
 
     /// Runs the service the way systemd's user manager runs it: its command
-    /// line, in `/`, with the manager's own small environment (no
-    /// `REX_SERVER`, no state directory override, a bare `PATH`) plus the
-    /// service's `Environment=`.
-    ///
-    /// Safety: `HOME` is a temp dir, so if the service didn't name a server
-    /// or a state directory, the job would fall back to defaults under that
-    /// temp dir, never the real ones; so does `XDG_RUNTIME_DIR`, which the
-    /// user manager sets.
+    /// line, with the manager's own small environment plus the service's
+    /// `Environment=` (see [`run_job`]).
     fn run_as_systemd(&self, env: &TestEnv) -> RunOutput {
-        let args = self.exec_start();
-        let harness = env.child_env();
-        let out = Command::new(&args[0])
-            .args(&args[1..])
-            .env_clear()
-            .env("HOME", env.mkdir("systemd-home"))
-            .env("PATH", SYSTEM_PATH)
-            .env(
-                "XDG_RUNTIME_DIR",
-                &harness[std::ffi::OsStr::new("XDG_RUNTIME_DIR")],
-            )
-            .envs(["USER", "LOGNAME", "SHELL"].iter().filter_map(|var| {
-                harness
-                    .get(std::ffi::OsStr::new(var))
-                    .map(|value| (var, value))
-            }))
-            .envs(self.environment())
-            .current_dir("/")
-            .stdin(std::process::Stdio::null())
-            .output()
-            .unwrap();
-        RunOutput {
-            command: format!("the service's job {args:?}"),
-            status: out.status,
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        }
+        run_job(
+            env,
+            "systemd",
+            &self.exec_start(),
+            &["USER", "LOGNAME", "SHELL"],
+            self.environment(),
+        )
     }
 }
 
@@ -377,9 +343,6 @@ fn words(line: &str, exec: bool) -> Vec<String> {
         words.push(word);
     }
 }
-
-/// An endpoint for install tests that never run the service.
-const NO_SERVER: &str = "unix:///tmp/rxt-none/s.sock";
 
 #[test]
 fn install_starts_a_timer_that_saves_every_15_minutes_by_default() {
@@ -511,6 +474,28 @@ fn installed_outside_rex_autosave_saves_the_server_at_rexs_default_endpoint() {
     assert!(install.stdout.contains(&endpoint), "{install}");
 }
 
+/// Without `XDG_RUNTIME_DIR` (under `su`, say), `rex` has no default
+/// endpoint where a Linux server listens, so install pins nothing and says
+/// to name the server.
+#[cfg(target_os = "linux")]
+#[test]
+fn installed_with_neither_rex_server_nor_xdg_runtime_dir_installs_nothing() {
+    let env = TestEnv::new();
+    let systemd = FakeSystemd::new(&env);
+
+    let out = systemd
+        .aim(env.rexurrect_at(NO_SERVER))
+        .env_remove("REX_SERVER")
+        .env_remove("XDG_RUNTIME_DIR")
+        .args(["autosave", "install"])
+        .run()
+        .assert_failure();
+
+    assert!(out.stderr.contains("XDG_RUNTIME_DIR"), "{out}");
+    assert!(out.stderr.contains("REX_SERVER"), "{out}");
+    assert!(names_in(&systemd.unit_dir()).is_empty());
+}
+
 #[test]
 fn a_successful_autosave_is_silent() {
     let env = TestEnv::new();
@@ -559,19 +544,6 @@ fn values_systemd_would_expand_reach_the_job_as_they_were() {
         units.env_var("REXURRECT_NO_SCROLLBACK").as_deref(),
         Some(programs)
     );
-}
-
-/// Asserts `out` tells the user how to remove the zsh recorder and the
-/// auto-restore line in Rex's init.lua.
-fn assert_explains_backing_out(out: &RunOutput) {
-    for what in [
-        "rexurrect.plugin.zsh",
-        ".zshrc",
-        "init.lua",
-        "https://github.com/cemcatik/rexurrect#auto-restore",
-    ] {
-        assert!(out.stdout.contains(what), "no mention of {what}: {out}");
-    }
 }
 
 #[test]

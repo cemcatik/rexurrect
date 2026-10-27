@@ -43,12 +43,7 @@ impl Systemd {
                 None => account::home()?.join(".config/systemd/user"),
             },
         };
-        let name = match settings::env_non_empty(LABEL_VAR) {
-            Some(name) => name
-                .into_string()
-                .map_err(|name| Error::new(format!("{LABEL_VAR} isn't valid UTF-8: {name:?}")))?,
-            None => NAME.to_string(),
-        };
+        let name = super::label_from_env(NAME)?;
         if !is_unit_name(&name) {
             return Err(Error::new(format!(
                 "{LABEL_VAR} must be a systemd unit name (letters, digits, `-`, `_`, `.` \

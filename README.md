@@ -366,7 +366,8 @@ replaces both units. `autosave uninstall` stops and disables the timer and remov
 
 With no `REX_SERVER` set at install, autosave saves the server at `rex`'s default endpoint,
 `unix://$XDG_RUNTIME_DIR/rex/server.sock` as install finds it (there's no Rex app to fall
-back to). The service's output is discarded, as on macOS; failures go to `rexurrect.log`.
+back to). If `XDG_RUNTIME_DIR` isn't set either (under `su`, say), install fails and asks you
+to set `REX_SERVER`. The service's output is discarded, as on macOS; failures go to `rexurrect.log`.
 
 To check that autosave works:
 

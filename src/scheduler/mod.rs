@@ -42,6 +42,17 @@ pub trait Scheduler {
 /// from the user's own.
 const LABEL_VAR: &str = "REXURRECT_AUTOSAVE_LABEL";
 
+/// The job's name from `$REXURRECT_AUTOSAVE_LABEL`, else `default`. Each
+/// scheduler checks it's a name it can use.
+fn label_from_env(default: &str) -> Result<String> {
+    match settings::env_non_empty(LABEL_VAR) {
+        Some(label) => label
+            .into_string()
+            .map_err(|label| Error::new(format!("{LABEL_VAR} isn't valid UTF-8: {label:?}"))),
+        None => Ok(default.to_string()),
+    }
+}
+
 /// Picks the scheduler (`launchd` or `systemd`) instead of the platform, so
 /// the systemd scheduler's tests run on macOS too.
 const SCHEDULER_VAR: &str = "REXURRECT_SCHEDULER";

@@ -15,7 +15,6 @@
 
 mod common;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -40,9 +39,7 @@ impl FakeLaunchd {
         for sub in ["bin", "loaded", "LaunchAgents"] {
             std::fs::create_dir_all(dir.join(sub)).unwrap();
         }
-        let script = dir.join("bin/launchctl");
-        std::fs::write(&script, launchctl_script(&dir)).unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&dir.join("bin/launchctl"), &launchctl_script(&dir));
         FakeLaunchd { dir }
     }
 
@@ -192,52 +189,18 @@ impl Agent {
     }
 
     /// Runs the agent's job the way launchd runs it: its program and
-    /// arguments, in `/`, with launchd's own small environment (no
-    /// `REX_SERVER`, no state directory override, a bare `PATH`) plus the
-    /// agent's `EnvironmentVariables`.
-    ///
-    /// Safety: `HOME` is a temp dir, so if the agent didn't name a server or
-    /// a state directory, the job would fall back to defaults under that
-    /// temp dir, never the real ones. `XDG_RUNTIME_DIR` (which launchd
-    /// doesn't set) points at the harness's empty temp dir for the same
-    /// reason: `rex` falls back to `$XDG_RUNTIME_DIR/rex/server.sock`.
+    /// arguments, with launchd's own small environment plus the agent's
+    /// `EnvironmentVariables` (see [`run_job`]).
     fn run_as_launchd(&self, env: &TestEnv) -> RunOutput {
-        let args = self.program_arguments();
-        let harness = env.child_env();
-        let out = Command::new(args[0])
-            .args(&args[1..])
-            .env_clear()
-            .env("HOME", env.mkdir("launchd-home"))
-            .env("PATH", SYSTEM_PATH)
-            .env(
-                "XDG_RUNTIME_DIR",
-                &harness[std::ffi::OsStr::new("XDG_RUNTIME_DIR")],
-            )
-            .envs(
-                ["USER", "LOGNAME", "SHELL", "TMPDIR"]
-                    .iter()
-                    .filter_map(|var| {
-                        harness
-                            .get(std::ffi::OsStr::new(var))
-                            .map(|value| (var, value))
-                    }),
-            )
-            .envs(self.environment())
-            .current_dir("/")
-            .stdin(std::process::Stdio::null())
-            .output()
-            .unwrap();
-        RunOutput {
-            command: format!("the agent's job {args:?}"),
-            status: out.status,
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        }
+        run_job(
+            env,
+            "launchd",
+            &self.program_arguments(),
+            &["USER", "LOGNAME", "SHELL", "TMPDIR"],
+            self.environment(),
+        )
     }
 }
-
-/// An endpoint for install tests that never run the agent's job.
-const NO_SERVER: &str = "unix:///tmp/rxt-none/s.sock";
 
 #[test]
 fn install_loads_an_agent_that_saves_every_15_minutes_by_default() {
@@ -392,19 +355,6 @@ fn an_autosave_while_rex_is_not_running_logs_the_failure_and_starts_no_server() 
     assert_eq!(entries.len(), 1, "{entries:#?}");
     assert!(entries[0].contains("save failed"), "{entries:#?}");
     assert!(entries[0].contains("isn't running"), "{entries:#?}");
-}
-
-/// Asserts `out` tells the user how to remove the zsh recorder and the
-/// auto-restore line in Rex's init.lua.
-fn assert_explains_backing_out(out: &RunOutput) {
-    for what in [
-        "rexurrect.plugin.zsh",
-        ".zshrc",
-        "init.lua",
-        "https://github.com/cemcatik/rexurrect#auto-restore",
-    ] {
-        assert!(out.stdout.contains(what), "no mention of {what}: {out}");
-    }
 }
 
 #[test]

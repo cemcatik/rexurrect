@@ -294,21 +294,24 @@ pub struct Replay {
 /// 2. Prints the file (one that has gone since restore checked is skipped,
 ///    and the shell still starts), then resets styles.
 /// 3. Execs Rex's own launch chain for a block's shell, copied from `ps` of
-///    a default block: login(1), whose `Last login:` banner separates the old
+///    a default block. On macOS: login(1), whose `Last login:` banner separates the old
 ///    output from the new (`-l` keeps the working directory, `-p` the
 ///    environment), then the shell as a login shell (`-zsh`). The shell reads
 ///    its startup files once, like any block's, and its first prompt picks
-///    up the typed last command.
+///    up the typed last command. On Linux Rex has no login(1) in the chain,
+///    so neither does the script (see the Linux [`REPLAY_SCRIPT`]).
 ///
 /// If Rex changes its own chain, restored blocks won't follow; the
 /// scrollback round-trip test checks the shell still starts as `-zsh` under
-/// `login`.
+/// `login` on macOS, and a unit test checks the Linux script.
 #[cfg(not(target_os = "linux"))]
 const REPLAY_SCRIPT: &str = r#"printf "\033[H\033[2J\033[3J"; cat -- "$1" 2>/dev/null; printf "\033[0m"; exec /usr/bin/login -flp "$2" /bin/bash --noprofile --norc -c "$3" rex-login "${4##*/}" "$4""#;
 
 /// On Linux, Rex starts a block's shell as a login shell (`-bash`) itself,
-/// with no login(1) (whose `-f` needs root there), so step 3 is only the
-/// last link of the chain, [`LOGIN_SHELL_EXEC`]'s, and there's no banner.
+/// with no login(1) (whose `-f` needs root there, and which Ubuntu 20.04
+/// has at `/bin/login`), so step 3 is only the last link of the chain,
+/// [`LOGIN_SHELL_EXEC`]'s, and no banner separates old output from new.
+/// The user (`$2`) goes unused.
 #[cfg(target_os = "linux")]
 const REPLAY_SCRIPT: &str = r#"printf "\033[H\033[2J\033[3J"; cat -- "$1" 2>/dev/null; printf "\033[0m"; shift 2; exec /bin/bash --noprofile --norc -c "$1" rex-login "${2##*/}" "$2""#;
 

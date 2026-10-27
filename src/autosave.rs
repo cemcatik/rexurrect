@@ -76,7 +76,9 @@ fn install(options: &InstallOptions) -> Result<ExitCode> {
 /// - `REX_SERVER`: the server install was aimed at, else on macOS the Rex
 ///   app's server, and elsewhere rex's default endpoint as install finds it
 ///   (`$XDG_RUNTIME_DIR/rex/server.sock`, where a Linux login server's
-///   per-account server listens). Save passes it to `rex` with `-S`, so the
+///   per-account server listens). Without `XDG_RUNTIME_DIR` there, rex's
+///   default would be the Mac app's socket, which never exists, so install
+///   fails instead. Save passes it to `rex` with `-S`, so the
 ///   job can't end up on another server: not rex's default in the job's own
 ///   environment, and not a fallback when the server isn't running.
 /// - the state directory, as resolved here, so autosave shares snapshots,
@@ -93,7 +95,16 @@ fn job_env(state: &StateDir) -> Result<BTreeMap<String, String>> {
     let server = match settings::env_non_empty(rex::SERVER_VAR) {
         Some(server) => utf8(&server)?,
         None if cfg!(target_os = "macos") => rex::app_server_endpoint(&account::home()?),
-        None => rex::default_endpoint(&account::home()?),
+        None if settings::env_non_empty("XDG_RUNTIME_DIR").is_some() => {
+            rex::default_endpoint(&account::home()?)
+        }
+        None => {
+            return Err(Error::new(
+                "neither REX_SERVER nor XDG_RUNTIME_DIR is set, so there's no Rex server to \
+                 autosave: set REX_SERVER to its endpoint, or run this where XDG_RUNTIME_DIR is \
+                 set (a login session)",
+            ));
+        }
     };
     let mut env = BTreeMap::new();
     env.insert(rex::SERVER_VAR.to_string(), server);

@@ -37,12 +37,7 @@ impl Launchd {
             Some(dir) => PathBuf::from(dir),
             None => account::home()?.join("Library/LaunchAgents"),
         };
-        let label = match settings::env_non_empty(LABEL_VAR) {
-            Some(label) => label
-                .into_string()
-                .map_err(|label| Error::new(format!("{LABEL_VAR} isn't valid UTF-8: {label:?}")))?,
-            None => LABEL.to_string(),
-        };
+        let label = super::label_from_env(LABEL)?;
         if label.contains('/') {
             return Err(Error::new(format!(
                 "{LABEL_VAR} can't contain `/`: {label:?}"
