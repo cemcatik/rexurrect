@@ -1,16 +1,16 @@
 //! Running a job on a timer: the one interface autosave installs through.
 //!
-//! launchd (macOS) is the only scheduler today ([`launchd::Launchd`]). A
-//! systemd user timer for Linux would be a second [`Scheduler`], picked in
-//! [`for_this_platform`].
+//! launchd on macOS ([`launchd::Launchd`]), a systemd user timer everywhere
+//! else ([`systemd::Systemd`]), picked in [`for_this_platform`].
 
 mod launchd;
+mod systemd;
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::settings;
 
 /// What a scheduler runs: a program with its arguments, every [`Interval`].
@@ -37,9 +37,42 @@ pub trait Scheduler {
     fn uninstall(&self) -> Result<bool>;
 }
 
+/// Replaces the job's name in the scheduler (launchd's label, systemd's
+/// unit name), so a scratch job tried out on the real scheduler stays apart
+/// from the user's own.
+const LABEL_VAR: &str = "REXURRECT_AUTOSAVE_LABEL";
+
+/// The job's name from `$REXURRECT_AUTOSAVE_LABEL`, else `default`. Each
+/// scheduler checks it's a name it can use.
+fn label_from_env(default: &str) -> Result<String> {
+    match settings::env_non_empty(LABEL_VAR) {
+        Some(label) => label
+            .into_string()
+            .map_err(|label| Error::new(format!("{LABEL_VAR} isn't valid UTF-8: {label:?}"))),
+        None => Ok(default.to_string()),
+    }
+}
+
+/// Picks the scheduler (`launchd` or `systemd`) instead of the platform, so
+/// the systemd scheduler's tests run on macOS too.
+const SCHEDULER_VAR: &str = "REXURRECT_SCHEDULER";
+
 /// The scheduler for the platform rexurrect runs on.
 pub fn for_this_platform() -> Result<Box<dyn Scheduler>> {
-    Ok(Box::new(launchd::Launchd::from_env()?))
+    let chosen = settings::env_non_empty(SCHEDULER_VAR);
+    let name = match chosen.as_ref().map(|name| name.to_str()) {
+        Some(Some(name)) => name,
+        Some(None) => return Err(Error::new(format!("{SCHEDULER_VAR} isn't valid UTF-8"))),
+        None if cfg!(target_os = "macos") => "launchd",
+        None => "systemd",
+    };
+    match name {
+        "launchd" => Ok(Box::new(launchd::Launchd::from_env()?)),
+        "systemd" => Ok(Box::new(systemd::Systemd::from_env()?)),
+        other => Err(Error::new(format!(
+            "{SCHEDULER_VAR} must be `launchd` or `systemd`, not {other:?}"
+        ))),
+    }
 }
 
 /// How often a job runs: a whole number of minutes, at least 1.

@@ -72,8 +72,9 @@ pub fn find_starter() -> Result<Starter> {
 /// no such server.
 pub fn rex_for(endpoint: &str) -> Result<Option<PathBuf>> {
     let mut servers = ServerProcess::running()?;
-    // A bare `rex`, from a server whose executable `ps` didn't give in full,
-    // is the very one that isn't on `PATH`.
+    // A bare `rex`, from a server whose executable's path couldn't be read
+    // (`ps` gives only the name, or `/proc` withholds the path), is the very
+    // one that isn't on `PATH`.
     servers.retain(|server| server.program.is_absolute());
     Ok(choose(&servers, endpoint).map(|server| server.program.clone()))
 }

@@ -295,7 +295,8 @@ rexurrect autosave uninstall
 (`io.github.cemcatik.rexurrect.autosave.plist`) and loads it, so `rexurrect save` runs
 every 15 minutes, or every `--interval` minutes, from now on and after every login. Running it
 again replaces the agent, so there's only ever one. macOS may show a one-time "Background Items
-Added" notification.
+Added" notification. On Linux it installs a systemd user timer instead (see
+[Autosave on Linux](#autosave-on-linux)).
 
 Autosave is silent: its output is discarded, and a failure (Rex not running, an API error, a
 snapshot that fails validation) only adds a line to `rexurrect.log` in the state directory.
@@ -334,6 +335,71 @@ directory.
 To check that autosave works, run `launchctl print gui/$(id -u)/io.github.cemcatik.rexurrect.autosave`
 (its `last exit code` should be 0 after the first run) and `rexurrect list` (a new snapshot
 every interval), and look in `rexurrect.log` for failures.
+
+## Linux
+
+rexurrect works against a Rex server on Linux too. So far it has been tried on one setup:
+Ubuntu 20.04 with systemd 245, Rex installed from its `.deb` (one binary, `/usr/bin/rex`), and
+each account's server started by Rex's login server (`rex-login-server.service`), reached
+from the Rex app on a Mac. The account's shell there is bash. Other distributions, init
+systems and setups will be added here as they're tried and reported.
+
+**Install** as above, with `cargo install`. Last commands come from the program running in each
+block (see [Usage](#usage)): the recorder is zsh-only, so a bash block's last command is the
+program that was in its foreground, not the last command typed at its prompt.
+
+`save`, `restore` and auto-restore work as on macOS. With no `REX_SERVER` set (outside Rex,
+over SSH, say), rexurrect uses `rex`'s default endpoint, `$XDG_RUNTIME_DIR/rex/server.sock`,
+which is where the login server's per-account server listens. With no `rex` on `PATH` (a
+`--tarball` install in `/usr/local/bin`, or the autosave timer), it runs the `rex` your
+running server runs, read from `/proc/<pid>/exe` (see [Which server](#which-server)).
+
+### Autosave on Linux
+
+`autosave install` writes two systemd user units to `$XDG_CONFIG_HOME/systemd/user` (else
+`~/.config/systemd/user`): `rexurrect-autosave.service`, which runs `rexurrect save` once
+with the environment described in [Autosave](#autosave), and `rexurrect-autosave.timer`, which
+runs it every 15 minutes (or `--interval` minutes), the first time one interval after it
+starts. Install then runs `systemctl --user daemon-reload` and enables and (re)starts the
+timer, so it runs from now on and whenever your systemd user manager runs. Installing again
+replaces both units. `autosave uninstall` stops and disables the timer and removes both units.
+
+With no `REX_SERVER` set at install, autosave saves the server at `rex`'s default endpoint,
+`unix://$XDG_RUNTIME_DIR/rex/server.sock` as install finds it (there's no Rex app to fall
+back to). If `XDG_RUNTIME_DIR` isn't set either (under `su`, say), install fails and asks you
+to set `REX_SERVER`. The service's output is discarded, as on macOS; failures go to `rexurrect.log`.
+
+To check that autosave works:
+
+```sh
+systemctl --user list-timers rexurrect-autosave.timer   # when it runs next, and last ran
+systemctl --user status rexurrect-autosave.service       # how the last run exited
+journalctl --user -u rexurrect-autosave.service          # each run's start and finish
+rexurrect list                                           # a new snapshot every interval
+```
+
+**Linger.** Your systemd user manager, and with it the timer, runs only while you have a login
+session, unless linger is on for your account. rexurrect never checks or changes linger.
+
+- **Rex's login server** opens a login session for your account for as long as it runs your
+  server, so the timer runs exactly while there's a server to save. No linger needed.
+- **A server you start by hand** with `rex server start` over SSH outlives your SSH login, but
+  the timer stops when you log out. To keep autosaving it, have linger on:
+  `loginctl enable-linger $USER` (it may need an admin).
+
+**The shared server** (`rex.service`, listening at `/run/rex/server.sock` and running as the
+`rex` account) hasn't been tried. It should work if rexurrect runs as the `rex` account, since
+its blocks already do: install rexurrect for that account, put the auto-restore line in that
+account's `init.lua`, run `autosave install` as it with `REX_SERVER=unix:///run/rex/server.sock`,
+and have an admin enable linger for `rex` (`loginctl enable-linger rex`), since nobody logs in
+as it.
+
+**Servers that stop when empty.** The login server starts each server with `--exit-empty`:
+once no session and no client connection is left, the server stops, and the next connection
+starts a new one. So with no client connected, closing your last session stops the server, and
+the next connection's auto-restore brings back the latest snapshot's sessions, including the
+ones you just closed. That's what happens after any restart on macOS too: a save from an
+empty server never replaces the latest snapshot. Servers on Linux just restart more often.
 
 ## Auto-restore
 
@@ -548,10 +614,25 @@ The integration tests run the built binary against throwaway Rex servers, so the
 They never touch your real Rex server, sessions or snapshots. The shared harness is in
 `tests/common/`.
 
-Autosave's tests never touch the real launchd either: `launchctl` is found on `PATH`, so they
-put a stand-in first, and `REXURRECT_LAUNCH_AGENTS_DIR` replaces `~/Library/LaunchAgents`.
-To try autosave on the real launchd without touching your own agent, also set
-`REXURRECT_AUTOSAVE_LABEL` to a scratch label (for both `install` and `uninstall`).
+Autosave's tests never touch the real launchd or systemd either: `launchctl` and `systemctl`
+are found on `PATH`, so they put a stand-in first, and `REXURRECT_LAUNCH_AGENTS_DIR` replaces
+`~/Library/LaunchAgents`, and `REXURRECT_SYSTEMD_USER_DIR` the systemd user unit directory.
+`REXURRECT_SCHEDULER` (`launchd` or `systemd`) picks the scheduler instead of the platform, so
+the systemd tests run on macOS too; the launchd tests run on macOS only.
+To try autosave on the real launchd or systemd without touching your own job, also set
+`REXURRECT_AUTOSAVE_LABEL` to a scratch label (for both `install` and `uninstall`); with
+systemd it names the units.
+
+Code for Linux only (reading `/proc`) isn't compiled on macOS. To type-check it there:
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+cargo clippy --target x86_64-unknown-linux-musl --all-targets -- -D warnings
+```
+
+To build for Linux (a static binary; every dependency is pure Rust), add
+`CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld` and run
+`cargo build --release --target x86_64-unknown-linux-musl`.
 
 `REXURRECT_APP_SESSION_WATCH` sets how long auto-restore looks for the app session after
 restoring: a whole number of seconds, at least 1, 30 by default. The tests give every

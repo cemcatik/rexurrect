@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use super::{Job, Scheduler};
+use super::{Job, LABEL_VAR, Scheduler};
 use crate::account;
 use crate::error::{Context, Error, Result};
 use crate::settings;
@@ -21,7 +21,6 @@ use crate::state;
 /// The autosave agent's label: its name in launchd and its plist's file name.
 const LABEL: &str = "io.github.cemcatik.rexurrect.autosave";
 const AGENTS_DIR_VAR: &str = "REXURRECT_LAUNCH_AGENTS_DIR";
-const LABEL_VAR: &str = "REXURRECT_AUTOSAVE_LABEL";
 
 #[derive(Debug)]
 pub struct Launchd {
@@ -38,12 +37,7 @@ impl Launchd {
             Some(dir) => PathBuf::from(dir),
             None => account::home()?.join("Library/LaunchAgents"),
         };
-        let label = match settings::env_non_empty(LABEL_VAR) {
-            Some(label) => label
-                .into_string()
-                .map_err(|label| Error::new(format!("{LABEL_VAR} isn't valid UTF-8: {label:?}")))?,
-            None => LABEL.to_string(),
-        };
+        let label = super::label_from_env(LABEL)?;
         if label.contains('/') {
             return Err(Error::new(format!(
                 "{LABEL_VAR} can't contain `/`: {label:?}"
