@@ -83,14 +83,14 @@ A save that runs on a timer without the user asking.
 _Avoid_: scheduled save, periodic save
 
 **Recorder**:
-The hook in a shell block's outermost shell that records each command as it starts. Shells nested inside it (`nix develop`, `poetry shell`) don't record.
+The hook in a shell block's outermost shell that records each command as it starts, whatever the shell. Shells nested inside it (`nix develop`, `poetry shell`) don't record. Only shells record last commands: a program reports its resume state instead.
 
 **Ignored command**:
 A command the recorder doesn't record, leaving the previous last command in place: a command on the ignore list (by name, or by the last part of its path, as `/bin/ls`) run on its own, rexurrect itself by default, and any multi-line command.
 _Avoid_: skip list, skipped command
 
 **Last command**:
-The command a restored shell block gets typed at its prompt, never run: the most recent command the block's recorder recorded. A block the recorder has recorded nothing for (no recorder installed, or its shell started before it was) falls back to the program in its foreground, a command block's own command included (its arguments, each quoted where zsh needs it, and never one with a control character in an argument), and keeps the last such program once it exits; failing that, a restored block keeps the last command it was restored with, or none. That way it carries forward across any number of server instances. rexurrect itself running in a block is never its last command.
+The command a restored shell block gets typed at its prompt, never run, unless the block resumes a program: the most recent command the block's recorder recorded. A block the recorder has recorded nothing for (no recorder installed, or its shell started before it was) falls back to the program in its foreground, a command block's own command included (its arguments, each quoted where zsh needs it, and never one with a control character in an argument), and keeps the last such program once it exits; failing that, a restored block keeps the last command it was restored with, or none. That way it carries forward across any number of server instances. rexurrect itself running in a block is never its last command.
 _Avoid_: last history entry
 
 ### Restoring
@@ -128,3 +128,29 @@ A restore that runs by itself once per server instance, as soon as the server is
 **App session**:
 A session the Rex app creates on its own when it finds the server with no sessions: an untouched session with a label Rex generated. Auto-restore closes one while it's still untouched.
 _Avoid_: extra session, empty session, default session
+
+### Resuming
+
+**Resume**:
+Bringing a program back in a restored block as it was, not just started again: its Neovim session, its agent conversation. Only a program that was in the block's foreground at the last save resumes; one that had exited by then doesn't, even if it's still the block's last command. Restore types the program's resume command at the block's prompt in place of its last command, or runs it when the program auto-resumes.
+_Avoid_: restore (that's sessions), reopen, relaunch
+
+**Program definition**:
+How rexurrect resumes one program: which foreground program it matches, what resume state (if any) the program reports, and the command that resumes it, built from that state. A few ship built in; the user can override them or add their own.
+_Avoid_: plugin (that's the zsh plugin, or a Neovim or Rex plugin), strategy, integration
+
+**Auto-resume**:
+A resume whose command restore runs rather than types. Only programs the user has listed auto-resume; by default, none do. A listed program that can't resume (it reported no resume state, or its Neovim session isn't there) still comes back running: restore runs the program's own command line as it was at the save, never the block's last command, which may only have started it (`make edit`, `git commit`).
+_Avoid_: auto-start, allow-list (bare)
+
+**Resume state**:
+What a program reports to rexurrect about itself, per block, so that it can resume: an agent conversation's ID, or the path of its session file. It's a value, never a command: rexurrect builds the command from it, and accepts only the kind of value the program's definition expects. A program that keeps its own state (Neovim, through its Neovim session) reports none.
+_Avoid_: program recorder, record (that's the recorder's)
+
+**Neovim session**:
+Neovim's own record of its buffers, windows, tab pages and directory, which reopens them when Neovim loads it. Neovim, or a plugin in it, keeps it; rexurrect only has Neovim load it when Neovim resumes. It has nothing to do with a **Session**.
+_Avoid_: session (bare), editor session
+
+**Agent conversation**:
+A coding agent's conversation (Claude Code's, Codex's, pi's), which the agent can reopen by its ID or its session file. The agents call it a session; it has nothing to do with a **Session** either.
+_Avoid_: agent session, session (bare)
