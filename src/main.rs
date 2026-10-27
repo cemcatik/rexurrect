@@ -20,8 +20,10 @@ mod log;
 mod process;
 mod programs;
 mod recorder;
+mod report;
 mod restore;
 mod resume;
+mod resume_state;
 mod retention;
 mod rex;
 mod save;
@@ -60,6 +62,7 @@ fn main() -> ExitCode {
         Command::AutoRestore(options) => {
             logging_failure("auto-restore", auto_restore::run(&options))
         }
+        Command::Report(options) => report::run(&options),
         Command::Help => {
             print!("{}", cli::USAGE);
             Ok(ExitCode::SUCCESS)

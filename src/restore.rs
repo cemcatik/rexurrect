@@ -250,7 +250,7 @@ fn restore_sessions(
     starting.retain(Timestamp::now(), is_live);
     let mut defaults = DefaultCommands::load(state)?;
     let replay = Replay::new(state);
-    let resuming = Resuming::new(&config.programs);
+    let mut resuming = Resuming::new(&config.programs);
 
     let mut report = RestoreReport {
         snapshot: Some(snapshot_id.clone()),

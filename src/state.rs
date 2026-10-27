@@ -204,6 +204,37 @@ pub fn remove_if_exists(path: &Path) -> Result<bool> {
     }
 }
 
+/// Removes the files in `dir`, each named for a block, of the blocks
+/// `is_live` says aren't live, unless they changed at or after `kept_since`:
+/// a file changed since save started reading the server may belong to a
+/// block that appeared since. Leaves alone names that aren't plain file
+/// names (see [`is_plain_file_name`]), temporary files among them, which a
+/// write may be about to rename over a block's file, and anything that
+/// isn't a file.
+pub fn remove_files_of_gone_blocks(
+    dir: &Path,
+    is_live: impl Fn(&str) -> bool,
+    kept_since: SystemTime,
+) -> Result<()> {
+    for entry in read_dir_or_empty(dir)? {
+        let name = entry.file_name();
+        let Some(block_id) = name.to_str() else {
+            continue;
+        };
+        if !is_plain_file_name(block_id) || is_live(block_id) {
+            continue;
+        }
+        let path = entry.path();
+        let reading = || format!("reading {}", path.display());
+        let metadata = entry.metadata().with_context(reading)?;
+        if !metadata.is_file() || metadata.modified().with_context(reading)? >= kept_since {
+            continue;
+        }
+        remove_if_exists(&path)?;
+    }
+    Ok(())
+}
+
 /// Removes a file or a whole directory; one that's already gone is fine.
 pub fn remove_entry(path: &Path) -> Result<()> {
     let removed = match fs::symlink_metadata(path) {

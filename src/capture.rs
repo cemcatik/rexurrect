@@ -9,8 +9,9 @@ use crate::error::{Error, Result};
 use crate::foreground;
 use crate::label;
 use crate::lineage::Lineage;
-use crate::programs::Programs;
+use crate::programs::{Programs, StateKind};
 use crate::recorder::{Recorded, RecorderFiles};
+use crate::resume_state::ResumeStates;
 use crate::rex::api::{
     BlockView, LayerView, LayoutView, SHELL_FLAVOR, SessionView, TerminalProcess, WindowView,
 };
@@ -28,10 +29,10 @@ use crate::workdir;
 
 /// What a save captures blocks with: what it compares them against (the
 /// local server's host, the home directory), what it knows about them on
-/// this machine (the recorder files, the sessions and blocks in their
-/// startup window, the default last commands), the programs whose blocks
-/// get no scrollback, the program definitions blocks resume by, and where it
-/// saves scrollback.
+/// this machine (the recorder files, the resume state programs reported, the
+/// sessions and blocks in their startup window, the default last commands),
+/// the programs whose blocks get no scrollback, the program definitions
+/// blocks resume by, and where it saves scrollback.
 pub struct CaptureContext {
     /// The local server's host. A block with a different `host_id` is a
     /// remote block.
@@ -40,6 +41,8 @@ pub struct CaptureContext {
     pub home: PathBuf,
     /// Each local shell block's last command, as its recorder recorded it.
     pub recorder: RecorderFiles,
+    /// Each block's resume state, as its program reported it.
+    pub resume_states: ResumeStates,
     /// The sessions and blocks restore created that are still starting.
     pub starting: Starting,
     /// Each block's default last command. A program the capture sees in a
@@ -70,6 +73,7 @@ impl CaptureContext {
             host_id: host_id.to_string(),
             home: account::home()?,
             recorder: RecorderFiles::new(state),
+            resume_states: ResumeStates::new(state),
             starting,
             defaults: DefaultCommands::load(state)?,
             scrollback: ScrollbackStore::new(state).for_snapshot(taken_at),
@@ -336,7 +340,7 @@ impl Capture<'_> {
             working_directory: workdir::working_directory(rex, session_id, block_id, &process)?,
             last_command: self.last_command(block_id, recorded, &process)?,
             scrollback: None,
-            resume: self.resume(&process)?,
+            resume: self.resume(block_id, &process)?,
         };
         let has_scrollback = !self.context.no_scrollback.running_in(&process);
         self.scrollback.push(has_scrollback.then(|| {
@@ -379,18 +383,31 @@ impl Capture<'_> {
     }
 
     /// The block's resumable program: the one in its foreground, if it
-    /// matches a program definition, whatever its last command. A program
-    /// that had exited by now doesn't resume, even if it's still the block's
-    /// last command.
-    fn resume(&self, process: &TerminalProcess) -> Result<Option<SavedResume>> {
+    /// matches a program definition, whatever its last command, with the
+    /// resume state reported for it, if that's of the kind the definition
+    /// expects. A program that expects state and reported none is still
+    /// resumable: restore decides it can't resume. A program that had exited
+    /// by now doesn't resume, even if it's still the block's last command.
+    fn resume(&self, block_id: &str, process: &TerminalProcess) -> Result<Option<SavedResume>> {
         let (Some(definition), Some(program)) = (
             self.context.programs.matching(process),
             process.foreground_program(),
         ) else {
             return Ok(None);
         };
+        let state = match definition.state {
+            StateKind::None => None,
+            kind => self
+                .context
+                .resume_states
+                .read(block_id)?
+                .filter(|reported| reported.program == definition.name)
+                .map(|reported| reported.state)
+                .filter(|state| kind.accepts(state)),
+        };
         Ok(Some(SavedResume {
             program: definition.name.clone(),
+            state,
             command_line: foreground::command_line(program)?,
         }))
     }

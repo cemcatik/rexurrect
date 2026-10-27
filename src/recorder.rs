@@ -31,7 +31,7 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::error::{Context, Result};
+use crate::error::Result;
 use crate::state::{self, StateDir};
 
 const DIR: &str = "recorder";
@@ -86,25 +86,7 @@ impl RecorderFiles {
         is_live: impl Fn(&str) -> bool,
         kept_since: SystemTime,
     ) -> Result<()> {
-        for entry in state::read_dir_or_empty(&self.dir)? {
-            let name = entry.file_name();
-            let Some(block_id) = name.to_str() else {
-                continue;
-            };
-            let Some(path) = self.file(block_id) else {
-                continue;
-            };
-            if is_live(block_id) {
-                continue;
-            }
-            let reading = || format!("reading {}", path.display());
-            let metadata = entry.metadata().with_context(reading)?;
-            if !metadata.is_file() || metadata.modified().with_context(reading)? >= kept_since {
-                continue;
-            }
-            state::remove_if_exists(&path)?;
-        }
-        Ok(())
+        state::remove_files_of_gone_blocks(&self.dir, is_live, kept_since)
     }
 
     /// Removes the temporary files (named `.…`) that recorders crashed
