@@ -14,7 +14,7 @@ A block resumes its program (an agent conversation, a Neovim session) when the p
 
 ## Consequences
 
-- A program the user quits after the last save, before the server stops, still resumes (up to an autosave interval). #60 tracks closing that with the shell recorder.
+- A program the user quits after the last save, before the server stops (up to an autosave interval later), doesn't resume when the block's shell has a recorder (#60): the recorder rewrites the block's record each time the prompt comes back, and restore reads a record written since the save as the program having exited. Without a recorder, or for a program quit inside a nested shell, it still resumes.
 - A hook needs rexurrect on the program's `PATH`, or names it by full path, which `rexurrect report <program> --print-hook` prints.
 - rexurrect owns the validation and the format of resume state, so it can change both, and it's the only place that decides which command a block gets.
 - The recorder-file contract stays shell-only and public, for #40's other shells. "Recorder" goes back to meaning the shell's hook only.

@@ -20,10 +20,10 @@
 #   keeps the PID, so the outermost shell carries on recording after it.
 # - Records from zsh's preexec hook, as a command starts, so a program still
 #   running at save time (nvim, a dev server) counts too.
-# - Rewrites the block's record, unchanged, from zsh's precmd hook, each time
-#   the prompt comes back, so restore can tell a program that was running at
-#   the last save had exited before the server stopped. It never creates a
-#   record that way.
+# - Rewrites the block's record with the same command from zsh's precmd
+#   hook, each time the prompt comes back, so restore can tell a program
+#   that was running at the last save had exited before the server stopped.
+#   It never creates a record that way.
 # - Ignores a command that spans several lines or holds any other control
 #   character, keeping the previous record: typed back at a prompt, a line
 #   break would act as Enter.
@@ -60,11 +60,12 @@
 #   then doesn't fall back to the program in its foreground either (that
 #   fallback is only for blocks with no file at all). This recorder never
 #   writes one: it only records commands.
-# - A recorder should rewrite the record, unchanged, each time the shell's
-#   prompt comes back, and never create one that way. A record written after
-#   a snapshot was taken tells restore the shell got control back after that
-#   save: a program the save found running in the block had exited, so the
-#   block doesn't resume it. Optional: without it, such a block resumes.
+# - A recorder should rewrite the record, with the same command, each time
+#   the shell's prompt comes back, and never create one that way. A record
+#   written since a save read it tells restore the shell got control back
+#   after that save: a program the save found running in the block had
+#   exited, so the block doesn't resume it. Optional: without it, such a
+#   block resumes.
 # - Written to a temporary file in the same directory whose name starts with
 #   `.`, then renamed over the record, so a reader never sees half a command.
 #   A save removes such a file once it has gone unchanged for an hour (left
@@ -94,13 +95,15 @@ _rexurrect_record() {
   # character disqualifies it, tab included: typed back, a tab completes.
   [[ -n $1 && $1 != *[[:cntrl:]]* && -n $REX_BLOCK ]] || return 0
   _rexurrect_ignored "$1" && return 0
-  _rexurrect_write "$1"
+  local REPLY
+  _rexurrect_dir && _rexurrect_write $REPLY "$1"
 }
 
-# Rewrites the block's record unchanged as the prompt comes back, so its
-# modification time says when the shell last had control: a record changed
-# after a save means the program that save saw running had exited. Never
-# creates a record: a block with nothing recorded keeps having none.
+# Rewrites the block's record with the same command as the prompt comes
+# back, so its modification time says when the shell last had control: a
+# record written since a save read it means the program that save saw
+# running had exited. Never creates a record: a block with nothing recorded
+# keeps having none.
 _rexurrect_rewrite() {
   emulate -L zsh
   local REPLY
@@ -109,7 +112,7 @@ _rexurrect_rewrite() {
   [[ -f $file ]] || return 0
   # $(<file) reads the file without forking.
   { record=$(<$file) } 2>/dev/null || return 0
-  _rexurrect_write "$record"
+  _rexurrect_write $REPLY "$record"
 }
 
 # Sets REPLY to the recorder directory; fails if there's none to use.
@@ -126,11 +129,10 @@ _rexurrect_dir() {
   REPLY+=/recorder
 }
 
-# Writes $1 as the block's record: to a temporary file, renamed over it.
+# Writes $2 as the block's record in the recorder directory $1: to a
+# temporary file, renamed over the record.
 _rexurrect_write() {
-  local REPLY
-  _rexurrect_dir || return 0
-  local dir=$REPLY
+  local dir=$1
   local file=$dir/$REX_BLOCK tmp=$dir/.$REX_BLOCK.$$
   {
     if [[ ! -d $dir ]]; then
@@ -140,7 +142,7 @@ _rexurrect_write() {
         command mkdir -p -m 700 $dir
       fi || return 0
     fi
-    print -r -- "$1" >| $tmp || return 0
+    print -r -- "$2" >| $tmp || return 0
     if (( $+builtins[zf_mv] )); then
       zf_mv -f $tmp $file
     else

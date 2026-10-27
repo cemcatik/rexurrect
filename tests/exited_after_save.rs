@@ -1,35 +1,16 @@
 //! A program that exited after the last save doesn't resume (#60). The zsh
 //! recorder rewrites the block's record each time the shell's prompt comes
-//! back, so a record changed after the snapshot was taken means the shell
-//! got control back: its program had exited. The block then comes back
+//! back, so a record written since the save read it means the shell got
+//! control back: its program had exited. The block then comes back
 //! with its record typed, as if the save had seen its shell.
 //!
 //! Programs are stand-ins ([`stand_in_bin`]). Each block quits its program
-//! with Ctrl-C, which ends a stand-in.
+//! with Ctrl-C, which ends a stand-in, between the save and the restart
+//! ([`restarted_after`]).
 
 mod common;
 
 use common::*;
-
-/// Saves, then runs `after_the_save` (quitting the program, say), then kills
-/// the session labelled `label` and restores it, and returns the restored
-/// session and its first block. Nothing saves in between, as when the
-/// server stops before the next autosave.
-fn restarted_after(
-    env: &TestEnv,
-    server: &Server,
-    session: &str,
-    label: &str,
-    after_the_save: impl FnOnce(),
-) -> (String, String) {
-    env.save(server);
-    after_the_save();
-    server.kill_session(session);
-    env.restore(server);
-    let restored = server.the_session_labelled(label);
-    let block = server.block_ids(&restored).remove(0);
-    (restored, block)
-}
 
 /// Quits the stand-in in the block, and waits for the shell's prompt.
 fn quit(server: &Server, session: &str, block: &str) {
@@ -105,7 +86,7 @@ fn a_neovim_still_running_at_the_restart_resumes() {
     write_session_vim(&dir);
     let (session, _) = running(&server, "zz-running", &dir, "nvim init.lua");
 
-    let (restored, block) = restarted_after(&env, &server, &session, "zz-running", || {});
+    let (restored, block) = restarted(&env, &server, &session, "zz-running");
 
     server.wait_for_typed(&restored, &block, "nvim -S");
 }
@@ -120,6 +101,7 @@ fn a_record_of_no_last_command_written_after_the_save_leaves_the_prompt_empty() 
     let dir = env.mkdir("a");
     write_session_vim(&dir);
     let (session, block) = running(&server, "zz-none", &dir, "nvim init.lua");
+    env.write_recorder_file(&block, "nvim init.lua");
 
     let (restored, block) = restarted_after(&env, &server, &session, "zz-none", || {
         env.write_recorder_file(&block, "")
@@ -184,4 +166,50 @@ fn a_restored_blocks_first_prompt_records_nothing_so_the_startup_window_keeps_it
     );
 
     restored_with_typed(&env, &server, &restored, "zz-first", "nvim -S");
+}
+
+/// A save in the startup window found no record for a restored block, so
+/// a record written after it says nothing about the program: here the user
+/// ran the typed `nvim -S`, which is still running at the restart.
+#[test]
+fn a_resume_command_run_after_a_save_in_the_startup_window_still_resumes() {
+    let env = TestEnv::with_recorder();
+    env.write_config("app_session_watch = 1\n");
+    stand_in_bin(&env, "nvim");
+    let server = env.start_server();
+    let dir = env.mkdir("a");
+    write_session_vim(&dir);
+    let (session, _) = running(&server, "zz-ran", &dir, "nvim init.lua");
+    let (restored, block) = restored_with_typed(&env, &server, &session, "zz-ran", "nvim -S");
+    env.save(&server);
+    server.write(&restored, &block, "\n");
+    wait_for_runs(&dir, "nvim", 2);
+
+    env.write_config("app_session_watch = 1\nauto_resume = [\"nvim\"]\n");
+    server.kill_session(&restored);
+    env.restore(&server);
+
+    assert_eq!(wait_for_runs(&dir, "nvim", 3), ["init.lua", "-S", "-S"]);
+}
+
+/// Restore can't read the record it would type: the block gets the last
+/// command the save found, and the restore carries on.
+#[test]
+fn a_record_restore_cannot_read_leaves_the_saved_last_command() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = TestEnv::new();
+    stand_in_bin(&env, "nvim");
+    let server = env.start_server();
+    let dir = env.mkdir("a");
+    write_session_vim(&dir);
+    let (session, block) = running(&server, "zz-unreadable", &dir, "nvim init.lua");
+    env.write_recorder_file(&block, "nvim init.lua");
+
+    let (restored, block) = restarted_after(&env, &server, &session, "zz-unreadable", || {
+        env.write_recorder_file(&block, "true zz-after");
+        let file = env.state_dir().join("recorder").join(&block);
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    });
+
+    server.wait_for_typed(&restored, &block, "nvim init.lua");
 }
