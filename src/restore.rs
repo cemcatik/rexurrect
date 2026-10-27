@@ -5,6 +5,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use crate::account;
+use crate::config::Config;
 use crate::create;
 use crate::defaults::DefaultCommands;
 use crate::error::{Context, Error, Result};
@@ -172,6 +173,9 @@ impl RestoreReport {
 }
 
 pub fn run(options: &RestoreOptions) -> Result<ExitCode> {
+    // No setting changes restore yet, but a config file it can't use fails
+    // it all the same, as it fails every other run that reads it.
+    Config::load()?;
     let state = StateDir::from_env()?;
     let lock = RestoreLock::acquire(&state)?;
     let rex = Rex::from_env()?;

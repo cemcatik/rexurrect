@@ -173,3 +173,24 @@ fn a_config_file_that_cannot_be_read_fails_save_naming_it() {
     );
     assert_eq!(env.listed(&server), "no snapshots yet\n");
 }
+
+/// Restore reads the file too, though no setting changes it yet: a file
+/// rexurrect can't use fails it before anything is restored.
+#[test]
+fn a_file_rexurrect_cannot_use_fails_restore_before_anything_is_restored() {
+    let env = TestEnv::new();
+    env.saved_on_an_earlier_server(&["zz-proj"]);
+    let server = env.start_server();
+    env.write_config("kep = 3\n");
+
+    let out = env.rexurrect(&server).arg("restore").run().assert_failure();
+
+    assert!(
+        out.stderr.contains("`kep`")
+            && out
+                .stderr
+                .contains(&env.config_path().display().to_string()),
+        "{out}"
+    );
+    assert_eq!(server.sessions(), []);
+}

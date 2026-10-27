@@ -96,10 +96,11 @@ impl Config {
                     config.no_scrollback = NoScrollbackPrograms::new(names);
                 }
                 "ready_timeout" => {
-                    config.ready_timeout = seconds(value).ok_or_else(|| wrong(SECONDS))?;
+                    config.ready_timeout = seconds(value).ok_or_else(|| wrong(SECONDS_WANTED))?;
                 }
                 "app_session_watch" => {
-                    config.app_session_watch = seconds(value).ok_or_else(|| wrong(SECONDS))?;
+                    config.app_session_watch =
+                        seconds(value).ok_or_else(|| wrong(SECONDS_WANTED))?;
                 }
                 _ => {
                     return Err(Error::new(format!(
@@ -122,7 +123,7 @@ const KEYS: [&str; 4] = [
     "app_session_watch",
 ];
 
-const SECONDS: &str = "a whole number of seconds, at least 1";
+const SECONDS_WANTED: &str = "a whole number of seconds, at least 1";
 
 /// A TOML integer of at least 1.
 fn whole_number(value: &toml::Value) -> Option<NonZeroU64> {
@@ -192,24 +193,24 @@ fn resolve(
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
     {
-        return Some(xdg.join(FILE));
+        return Some(xdg.join(PATH_IN_CONFIG_DIR));
     }
-    home.map(|home| PathBuf::from(home).join(".config").join(FILE))
+    home.map(|home| PathBuf::from(home).join(".config").join(PATH_IN_CONFIG_DIR))
 }
 
 /// The file's path in a config directory.
-const FILE: &str = "rexurrect/config.toml";
+const PATH_IN_CONFIG_DIR: &str = "rexurrect/config.toml";
 
 /// A setting that was an environment variable before it moved into the
 /// file.
 struct Moved {
     var: &'static str,
     key: &'static str,
-    kind: Kind,
+    old_value: OldValue,
 }
 
-/// What a moved variable held.
-enum Kind {
+/// What a moved variable held, and so what it becomes in the file.
+enum OldValue {
     /// A whole number; empty counted as unset.
     Number,
     /// Program names separated by spaces; empty meant none.
@@ -220,22 +221,22 @@ const MOVED: [Moved; 4] = [
     Moved {
         var: "REXURRECT_KEEP",
         key: "keep",
-        kind: Kind::Number,
+        old_value: OldValue::Number,
     },
     Moved {
         var: "REXURRECT_NO_SCROLLBACK",
         key: "no_scrollback",
-        kind: Kind::Programs,
+        old_value: OldValue::Programs,
     },
     Moved {
         var: "REXURRECT_READY_TIMEOUT",
         key: "ready_timeout",
-        kind: Kind::Number,
+        old_value: OldValue::Number,
     },
     Moved {
         var: "REXURRECT_APP_SESSION_WATCH",
         key: "app_session_watch",
-        kind: Kind::Number,
+        old_value: OldValue::Number,
     },
 ];
 
@@ -254,15 +255,15 @@ fn moved_variable_warnings(file: &Path, var: impl Fn(&str) -> Option<OsString>) 
         .filter_map(|moved| {
             let value = var(moved.var)?;
             let value = value.to_string_lossy();
-            let line = match moved.kind {
-                Kind::Number if value.is_empty() => return None,
+            let line = match moved.old_value {
+                OldValue::Number if value.is_empty() => return None,
                 // As the file would have it, even a number the file would
                 // refuse: loading it then says what's wrong with it.
-                Kind::Number => match value.trim().parse::<i64>() {
+                OldValue::Number => match value.trim().parse::<i64>() {
                     Ok(number) => toml::Value::Integer(number),
                     Err(_) => toml::Value::String(value.into_owned()),
                 },
-                Kind::Programs => toml::Value::Array(
+                OldValue::Programs => toml::Value::Array(
                     value
                         .split_whitespace()
                         .map(|name| toml::Value::String(name.to_string()))

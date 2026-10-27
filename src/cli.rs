@@ -83,6 +83,8 @@ Settings, in the config file $XDG_CONFIG_HOME/rexurrect/config.toml, else
                               for
   ready_timeout = 60          How long auto-restore waits for the Rex server
                               to be ready, in seconds
+  app_session_watch = 30      How long auto-restore looks for the app session
+                              after restoring, in seconds
 
 Environment:
   REX_SERVER           The Rex server to talk to (default: rex's own default)
