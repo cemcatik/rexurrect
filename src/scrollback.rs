@@ -303,7 +303,14 @@ pub struct Replay {
 /// If Rex changes its own chain, restored blocks won't follow; the
 /// scrollback round-trip test checks the shell still starts as `-zsh` under
 /// `login`.
+#[cfg(not(target_os = "linux"))]
 const REPLAY_SCRIPT: &str = r#"printf "\033[H\033[2J\033[3J"; cat -- "$1" 2>/dev/null; printf "\033[0m"; exec /usr/bin/login -flp "$2" /bin/bash --noprofile --norc -c "$3" rex-login "${4##*/}" "$4""#;
+
+/// On Linux, Rex starts a block's shell as a login shell (`-bash`) itself,
+/// with no login(1) (whose `-f` needs root there), so step 3 is only the
+/// last link of the chain, [`LOGIN_SHELL_EXEC`]'s, and there's no banner.
+#[cfg(target_os = "linux")]
+const REPLAY_SCRIPT: &str = r#"printf "\033[H\033[2J\033[3J"; cat -- "$1" 2>/dev/null; printf "\033[0m"; shift 2; exec /bin/bash --noprofile --norc -c "$1" rex-login "${2##*/}" "$2""#;
 
 /// The last link of Rex's launch chain: execs the shell with `-<name>` as
 /// its argv0, which makes it a login shell.
@@ -372,6 +379,43 @@ struct ReplayArguments<'a> {
 mod tests {
     use super::*;
     use crate::rex::api::ProcessInfo;
+
+    /// Runs [`REPLAY_SCRIPT`] the way Rex runs a restored block's command,
+    /// with a stand-in login shell, bash under another name, that says what
+    /// it was started as (its `$0`, which a script's isn't).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn on_linux_the_replay_prints_the_scrollback_then_starts_a_login_shell_directly() {
+        use std::io::Write;
+
+        let dir = std::env::temp_dir().join(format!("rexurrect-replay-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let scrollback = dir.join("block.vt");
+        std::fs::write(&scrollback, "old output\n").unwrap();
+        let shell = dir.join("fish");
+        std::os::unix::fs::symlink("/bin/bash", &shell).unwrap();
+
+        let mut replay = std::process::Command::new("/bin/bash")
+            .args(["--noprofile", "--norc", "-c", REPLAY_SCRIPT, "rexurrect"])
+            .arg(&scrollback)
+            .args(["someone", LOGIN_SHELL_EXEC])
+            .arg(&shell)
+            .env("HOME", &dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = replay.stdin.take().unwrap();
+        stdin.write_all(b"echo \"started as $0\"\n").unwrap();
+        drop(stdin);
+        let out = replay.wait_with_output().unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{out:?}");
+        assert!(stdout.contains("old output\n"), "{stdout:?}");
+        assert!(stdout.ends_with("started as -fish\n"), "{stdout:?}");
+    }
 
     /// #42: a command block's first process is its command. Claude Code's
     /// executable is named for its version, so only its `argv0` is listed.

@@ -7,6 +7,11 @@
 //! loaded. The installed agent's job is then run the way launchd would run
 //! it ([`Agent::run_as_launchd`]): its program, arguments and environment
 //! only, so no `REX_SERVER` from the test leaks in.
+//!
+//! macOS only, like launchd (and `plutil`, which reads the plists). The
+//! systemd timer has tests of its own, in `autosave_systemd.rs`.
+
+#![cfg(target_os = "macos")]
 
 mod common;
 

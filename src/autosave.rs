@@ -1,6 +1,7 @@
 //! `rexurrect autosave install|uninstall`: run `save` on a timer.
 //!
-//! The scheduler (launchd today) is behind [`crate::scheduler::Scheduler`].
+//! The scheduler (launchd on macOS, a systemd user timer elsewhere) is
+//! behind [`crate::scheduler::Scheduler`].
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -69,13 +70,15 @@ fn install(options: &InstallOptions) -> Result<ExitCode> {
 }
 
 /// The autosave job's environment. A scheduler starts its jobs with
-/// almost none (launchd: no `REX_SERVER`, a bare `PATH`, nothing from the
-/// user's shell), so the job gets what `save` depends on, as install finds
+/// almost none (no `REX_SERVER`, a bare `PATH`, nothing from the user's
+/// shell), so the job gets what `save` depends on, as install finds
 /// it:
-/// - `REX_SERVER`: the server install was aimed at, else the Rex app's
-///   server. Save passes it to `rex` with `-S`, so the job can't end up on
-///   another server: not rex's default, which `XDG_RUNTIME_DIR` changes,
-///   and not a fallback when the server isn't running.
+/// - `REX_SERVER`: the server install was aimed at, else on macOS the Rex
+///   app's server, and elsewhere rex's default endpoint as install finds it
+///   (`$XDG_RUNTIME_DIR/rex/server.sock`, where a Linux login server's
+///   per-account server listens). Save passes it to `rex` with `-S`, so the
+///   job can't end up on another server: not rex's default in the job's own
+///   environment, and not a fallback when the server isn't running.
 /// - the state directory, as resolved here, so autosave shares snapshots,
 ///   lineage and recorder files with manual runs and the zsh recorder;
 /// - `REXURRECT_KEEP`, if set, so autosave doesn't prune the snapshots the
@@ -89,7 +92,8 @@ fn install(options: &InstallOptions) -> Result<ExitCode> {
 fn job_env(state: &StateDir) -> Result<BTreeMap<String, String>> {
     let server = match settings::env_non_empty(rex::SERVER_VAR) {
         Some(server) => utf8(&server)?,
-        None => rex::app_server_endpoint(&account::home()?),
+        None if cfg!(target_os = "macos") => rex::app_server_endpoint(&account::home()?),
+        None => rex::default_endpoint(&account::home()?),
     };
     let mut env = BTreeMap::new();
     env.insert(rex::SERVER_VAR.to_string(), server);
