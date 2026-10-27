@@ -11,49 +11,8 @@
 
 mod common;
 
-use std::path::Path;
-
 use common::*;
 use serde_json::json;
-
-/// vim-obsession's Neovim session, in `dir`.
-fn write_session_vim(dir: &Path) {
-    std::fs::write(dir.join("Session.vim"), "\" a Neovim session\n").unwrap();
-}
-
-/// A session labelled `label` with one shell block in `dir`, running
-/// `command` (a stand-in, by name) when this returns. Returns the session
-/// and its block.
-fn running(server: &Server, label: &str, dir: &Path, command: &str) -> (String, String) {
-    let fixture = server.create_session(label, &[window(shell(dir))]);
-    server.wait_for_pwds(&fixture);
-    let block = fixture.block_ids()[0].to_string();
-    let program = command.split_whitespace().next().unwrap();
-    let ran = runs(dir, program).len();
-    server.run(&fixture.id, &block, command);
-    common::server::wait_for(&format!("{command} to start"), || {
-        (runs(dir, program).len() > ran).then_some(())
-    });
-    (fixture.id, block)
-}
-
-/// Saves, kills the session `session_id`, restores it, and returns the
-/// restored session and its one block, once `typed` sits at its prompt.
-fn restored_with_typed(
-    env: &TestEnv,
-    server: &Server,
-    session_id: &str,
-    label: &str,
-    typed: &str,
-) -> (String, String) {
-    env.save(server);
-    server.kill_session(session_id);
-    env.restore(server);
-    let restored = server.the_session_labelled(label);
-    let block = server.block_ids(&restored).remove(0);
-    server.wait_for_typed(&restored, &block, typed);
-    (restored, block)
-}
 
 #[test]
 fn a_block_running_neovim_where_a_session_vim_is_comes_back_with_nvim_dash_s_typed_not_run() {
