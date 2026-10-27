@@ -9,6 +9,7 @@ use std::fmt;
 
 use crate::auto_restore::AutoRestoreOptions;
 use crate::autosave::{AutosaveCommand, InstallOptions};
+use crate::report::ReportOptions;
 use crate::restore::RestoreOptions;
 use crate::scheduler::Interval;
 
@@ -18,13 +19,15 @@ pub enum Command {
     List,
     Autosave(AutosaveCommand),
     AutoRestore(AutoRestoreOptions),
+    Report(ReportOptions),
     Help,
     Version,
 }
 
 impl Command {
     /// The command's name, for warnings and the log; `None` for help and
-    /// the version, which read nothing.
+    /// the version, which read nothing, and for `report`, which never
+    /// prints (a hook's output reaches its agent).
     pub fn name(&self) -> Option<&'static str> {
         match self {
             Command::Save => Some("save"),
@@ -33,7 +36,7 @@ impl Command {
             Command::Autosave(AutosaveCommand::Install(_)) => Some("autosave install"),
             Command::Autosave(AutosaveCommand::Uninstall) => Some("autosave uninstall"),
             Command::AutoRestore(_) => Some("auto-restore"),
-            Command::Help | Command::Version => None,
+            Command::Report(_) | Command::Help | Command::Version => None,
         }
     }
 }
@@ -54,6 +57,10 @@ Commands:
   auto-restore
             For Rex's init.lua: once the server running it is ready, restore
             into it in the background, once per server instance
+  report <program> [value]
+            For a program's hook: store the program's resume state for the
+            block it runs in (the hook's payload on stdin, without a value).
+            Never prints, always exits 0
   help      Show this help
 
 Restore options:
@@ -71,6 +78,10 @@ Auto-restore options:
                       config file
   --server-pid <pid>  Wait for the Rex server with this pid and restore into
                       it, in the foreground (what the background run does)
+
+Report options:
+  --print-hook  Print what to add to the program's own config (Claude Code's
+                settings.json) to report its resume state; changes no file
 
 Options:
   -h, --help     Show this help
@@ -104,6 +115,10 @@ impl fmt::Display for UsageError {
 }
 
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, UsageError> {
+    let args: Vec<OsString> = args.into_iter().collect();
+    if args.first().is_some_and(|command| command == "report") {
+        return Ok(Command::Report(parse_report(&args[1..])));
+    }
     let mut args = Args::new(args)?;
     if args.wants_help() {
         return Ok(Command::Help);
@@ -194,6 +209,29 @@ fn parse_auto_restore(args: &mut Args) -> Result<AutoRestoreOptions, UsageError>
         ));
     }
     Ok(options)
+}
+
+/// `report`'s arguments. Never a usage error, nor help: `report` runs from
+/// hooks, whose output reaches their agent, so arguments it can't use are
+/// logged, not printed (see `report`). One that isn't UTF-8 is read with
+/// its bad bytes replaced, which no program definition's state kind
+/// accepts.
+fn parse_report(args: &[OsString]) -> ReportOptions {
+    let mut args = args.iter().map(|arg| arg.to_string_lossy().into_owned());
+    let mut options = ReportOptions {
+        program: args.next(),
+        ..ReportOptions::default()
+    };
+    for arg in args {
+        if arg == "--print-hook" {
+            options.print_hook = true;
+        } else if options.value.is_none() {
+            options.value = Some(arg);
+        } else {
+            options.extra_arguments = true;
+        }
+    }
+    options
 }
 
 /// The remaining arguments, as UTF-8 strings.

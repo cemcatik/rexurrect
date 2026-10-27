@@ -50,7 +50,7 @@ fn zsh_line(arguments: &[String]) -> Option<String> {
 /// `argument` as one zsh word: as it is if every character is plain, else in
 /// single quotes, inside which zsh treats everything literally but `'`
 /// itself (closed, escaped, reopened).
-fn quoted(argument: &str) -> String {
+pub fn quoted(argument: &str) -> String {
     if is_plain(argument) {
         argument.to_string()
     } else {

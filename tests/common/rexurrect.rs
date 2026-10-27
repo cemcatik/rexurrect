@@ -21,6 +21,7 @@ pub struct RexurrectCmd {
     args: Vec<OsString>,
     env: BTreeMap<OsString, OsString>,
     path_prepend: Vec<PathBuf>,
+    stdin: Option<Vec<u8>>,
 }
 
 impl RexurrectCmd {
@@ -29,7 +30,15 @@ impl RexurrectCmd {
             args: Vec::new(),
             env,
             path_prepend: Vec::new(),
+            stdin: None,
         }
+    }
+
+    /// Feeds `input` to the run's stdin, then closes it (by default stdin
+    /// is empty).
+    pub fn stdin(mut self, input: impl Into<Vec<u8>>) -> Self {
+        self.stdin = Some(input.into());
+        self
     }
 
     pub fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
@@ -71,15 +80,25 @@ impl RexurrectCmd {
     /// Starts the run without waiting for it, e.g. to run two at once.
     pub fn spawn(mut self) -> Running {
         prepend_path(&mut self.env, &self.path_prepend);
-        let child = Command::new(bin())
+        let mut child = Command::new(bin())
             .args(&self.args)
             .env_clear()
             .envs(&self.env)
-            .stdin(Stdio::null())
+            .stdin(if self.stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .expect("running rexurrect");
+        if let Some(input) = self.stdin {
+            use std::io::Write;
+            let mut stdin = child.stdin.take().unwrap();
+            // A run that doesn't read it all closes the pipe early.
+            let _ = stdin.write_all(&input);
+        }
         Running {
             command: format!("rexurrect {:?}", self.args),
             child: Some(child),

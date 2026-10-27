@@ -263,9 +263,12 @@ two minutes.
 `recorder/` holds one file per block with the last command the recorder recorded; only
 recorders write there. `default-commands.json` holds each block's last command when there's no
 recorder file: the last program a save saw running in it, else the command restore typed there.
+`resume/` holds one file per block with the resume state its program reported through
+`rexurrect report` (see [Resuming programs](#resuming-programs)); only `report` writes there, and
+`report-failures.json` remembers which of its failures it has logged.
 `too-large-scrollback.json` names the blocks the last save saved without scrollback because it
-was too large, so each is logged once rather than at every save. Each save that writes a snapshot then removes the `recorder/` files and `default-commands.json`
-entries of blocks that no longer exist, and the `lineage.json` and `starting-sessions.json`
+was too large, so each is logged once rather than at every save. Each save that writes a snapshot then removes the `recorder/` and `resume/` files and
+`default-commands.json` entries of blocks that no longer exist, and the `lineage.json` and `starting-sessions.json`
 entries of sessions that no longer exist, so the directory doesn't grow forever. A save that
 fails or writes nothing removes nothing. `scrollback/` holds each snapshot's block scrollback,
 which goes when its snapshot goes (or two minutes after a restore from it, if that's later); a
@@ -288,7 +291,8 @@ snapshot, once it has gone unchanged for an hour.
 ## Resuming programs
 
 A block that was running a program when it was saved can come back with the program **resumed**,
-not just started again: Neovim with its buffers, splits and tab pages. rexurrect knows how to
+not just started again: Neovim with its buffers, splits and tab pages, Claude Code with the
+conversation you were in. rexurrect knows how to
 resume a program through its **program definition**. At each save, a block whose foreground
 program matches a definition (by the name it was run by or its executable's name, as
 `no_scrollback` matches) is saved as resumable. At restore, the definition builds the program's
@@ -304,6 +308,23 @@ command until you run something.
 
 Snapshots taken before rexurrect resumed programs restore as they always did.
 
+Built in:
+
+| Program | Resumes with | When |
+| --- | --- | --- |
+| Neovim (`nvim`) | `nvim -S` | a `Session.vim` is in the block's working directory |
+| Claude Code (`claude`) | `claude --resume <conversation ID>` | its hook has reported the conversation |
+
+Some programs need to tell rexurrect something for it to resume them: an agent its conversation's
+ID, say. That's the program's **resume state**, and the program reports it with
+`rexurrect report <program>`, from a hook in its own config. It's only ever a value, never a
+command: rexurrect checks it's the kind of value the program's definition expects (an ID is
+letters, digits, `-`, `_`, `.` and `:`, and never starts with `-`) and builds the command
+itself, so a hook can't make restore type anything else. `report` never prints and always
+exits 0, so nothing it does shows up in, or holds up, the program that ran it; what it can't do
+goes to `rexurrect.log`, once per cause. What it stores is private to rexurrect, in the state
+directory, and a save forgets the blocks that are gone.
+
 ### Neovim
 
 Neovim resumes from its **Neovim session** (its own record of its buffers, windows, tab pages and
@@ -318,6 +339,44 @@ on exit when its terminal goes away, so a session manager that saves on exit has
 time the Rex server is gone.
 
 [vim-obsession]: https://github.com/tpope/vim-obsession
+
+### Claude Code
+
+Claude Code reports its conversation from a `SessionStart` hook, which it runs whenever a
+conversation starts, resumes, or is cleared or compacted, so the block always holds the
+conversation on screen. Subagents don't change it. rexurrect never edits Claude Code's config;
+print the hook and add it to `~/.claude/settings.json` yourself:
+
+```sh
+rexurrect report claude --print-hook
+```
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "REXURRECT_STATE_DIR=/Users/you/.local/state/rexurrect REXURRECT_CONFIG=/Users/you/.config/rexurrect/config.toml /Users/you/.cargo/bin/rexurrect report claude",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+It names rexurrect by its full path and pins the state directory and config file, as
+`auto-restore --print-hook` does, so print it again if you move any of them. If your
+`settings.json` already has hooks, add the `SessionStart` entry beside them.
+
+From then on, a block that was running `claude` comes back with `claude --resume <its
+conversation>` typed. The command drops any flags `claude` was started with. A block whose
+`claude` hasn't reported a conversation (it started before you added the hook) comes back with
+its last command. If two blocks were in one conversation, only the first, in layout order, gets
+the resume command, so two Claude Codes never write to one conversation.
 
 ## Settings
 

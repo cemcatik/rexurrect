@@ -183,6 +183,10 @@ pub struct SavedResume {
     /// The name of the program definition it matched. The definition itself
     /// is read at restore, so a change to it applies to existing snapshots.
     pub program: String,
+    /// The resume state the program had reported for the block, if any, and
+    /// if it was of the kind its definition expected (see `resume_state`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
     /// The program's own command line, as the foreground fallback reads it
     /// (see `foreground`); absent if it couldn't be read or typed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
