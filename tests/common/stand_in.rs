@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::env::TestEnv;
+use super::fixture::{shell, window};
+use super::server::{Server, wait_for};
 
 const SOURCE: &str = r#"fn main() {
     let mut args = std::env::args();
@@ -67,4 +69,62 @@ pub fn runs(dir: &Path, name: &str) -> Vec<String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => panic!("reading the stand-in's runs: {e}"),
     }
+}
+
+/// Waits until the stand-in `program` in `dir` has run `count` times, and
+/// returns how each run was started.
+pub fn wait_for_runs(dir: &Path, program: &str, count: usize) -> Vec<String> {
+    wait_for(&format!("{program} to have run {count} times"), || {
+        let runs = runs(dir, program);
+        (runs.len() >= count).then_some(runs)
+    })
+}
+
+/// vim-obsession's Neovim session, in `dir`.
+pub fn write_session_vim(dir: &Path) {
+    std::fs::write(dir.join("Session.vim"), "\" a Neovim session\n").unwrap();
+}
+
+/// Creates a session labelled `label` with one shell block in `dir`, and
+/// runs `command` there (a stand-in, by name, its first word), waiting
+/// until it has started. Returns the session and its block.
+pub fn running(server: &Server, label: &str, dir: &Path, command: &str) -> (String, String) {
+    let fixture = server.create_session(label, &[window(shell(dir))]);
+    server.wait_for_pwds(&fixture);
+    let block = fixture.block_ids()[0].to_string();
+    run_and_wait(server, &fixture.id, &block, dir, command);
+    (fixture.id, block)
+}
+
+/// Runs `command` (a stand-in, by name, its first word) in the block, whose
+/// working directory is `dir`, and waits until it has started.
+pub fn run_and_wait(server: &Server, session: &str, block: &str, dir: &Path, command: &str) {
+    let program = command.split_whitespace().next().unwrap();
+    let ran = runs(dir, program).len();
+    server.run(session, block, command);
+    wait_for_runs(dir, program, ran + 1);
+}
+
+/// Saves, kills the session `session`, restores it, and returns the
+/// restored session and its first block.
+pub fn restarted(env: &TestEnv, server: &Server, session: &str, label: &str) -> (String, String) {
+    env.save(server);
+    server.kill_session(session);
+    env.restore(server);
+    let restored = server.the_session_labelled(label);
+    let block = server.block_ids(&restored).remove(0);
+    (restored, block)
+}
+
+/// [`restarted`], once `typed` sits at the restored block's prompt.
+pub fn restored_with_typed(
+    env: &TestEnv,
+    server: &Server,
+    session: &str,
+    label: &str,
+    typed: &str,
+) -> (String, String) {
+    let (restored, block) = restarted(env, server, session, label);
+    server.wait_for_typed(&restored, &block, typed);
+    (restored, block)
 }

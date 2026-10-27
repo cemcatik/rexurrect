@@ -42,7 +42,8 @@
 //! - an executable to copy, rename or run through a symlink:
 //!   [`build_sleeper`], a test-built program that sleeps;
 //! - a program rexurrect resumes (`nvim`, `claude`): [`stand_in_bin`],
-//!   whose runs [`runs`] reads back.
+//!   whose runs [`runs`] reads back; [`running`] starts one in a new
+//!   session and [`restored_with_typed`] restarts it.
 
 #![allow(dead_code, unused_imports)]
 
@@ -65,5 +66,8 @@ pub use rexurrect::{RexurrectCmd, RunOutput, Running};
 pub use scheduled::{NO_SERVER, assert_explains_backing_out, run_job, write_script};
 pub use server::{Server, SessionSummary};
 pub use sleeper::build_sleeper;
-pub use stand_in::{build_stand_in, runs, stand_in_bin};
+pub use stand_in::{
+    build_stand_in, restarted, restored_with_typed, run_and_wait, running, runs, stand_in_bin,
+    wait_for_runs, write_session_vim,
+};
 pub use stub::RexStub;

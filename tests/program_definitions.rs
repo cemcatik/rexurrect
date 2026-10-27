@@ -6,42 +6,8 @@
 
 mod common;
 
-use std::path::Path;
-
 use common::server::wait_for;
 use common::*;
-
-/// A session labelled `label` with one shell block in `dir`, running
-/// `command` (a stand-in, by name) when this returns. Returns the session
-/// and its block.
-fn running(server: &Server, label: &str, dir: &Path, command: &str) -> (String, String) {
-    let fixture = server.create_session(label, &[window(shell(dir))]);
-    server.wait_for_pwds(&fixture);
-    let block = fixture.block_ids()[0].to_string();
-    let program = command.split_whitespace().next().unwrap();
-    server.run(&fixture.id, &block, command);
-    wait_for(&format!("{command} to start"), || {
-        (!runs(dir, program).is_empty()).then_some(())
-    });
-    (fixture.id, block)
-}
-
-/// Saves, kills the session, restores, and waits until `typed` sits at the
-/// restored block's prompt. Returns the restored session.
-fn restored_with_typed(
-    env: &TestEnv,
-    server: &Server,
-    session: &str,
-    label: &str,
-    typed: &str,
-) -> String {
-    env.save(server);
-    server.kill_session(session);
-    env.restore(server);
-    let restored = server.the_session_labelled(label);
-    server.wait_for_typed(&restored, &server.block_ids(&restored)[0], typed);
-    restored
-}
 
 /// The README's persistence.nvim (LazyVim) example.
 const PERSISTENCE: &str = r#"nvim -c 'lua require("persistence").load()'"#;
@@ -60,7 +26,7 @@ fn neovim_can_resume_through_persistence_with_or_without_a_session_vim() {
     let dir = env.mkdir("a");
     let (session, _) = running(&server, "zz-lazy", &dir, "nvim init.lua");
 
-    let restored = restored_with_typed(&env, &server, &session, "zz-lazy", PERSISTENCE);
+    let (restored, _) = restored_with_typed(&env, &server, &session, "zz-lazy", PERSISTENCE);
     std::fs::write(dir.join("Session.vim"), "").unwrap();
     env.end_startup_windows();
     let block = server.block_ids(&restored).remove(0);

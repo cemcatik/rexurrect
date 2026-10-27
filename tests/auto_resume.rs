@@ -8,56 +8,7 @@
 
 mod common;
 
-use std::path::Path;
-
-use common::server::wait_for;
 use common::*;
-
-fn write_session_vim(dir: &Path) {
-    std::fs::write(dir.join("Session.vim"), "\" a Neovim session\n").unwrap();
-}
-
-/// A session labelled `label` with one shell block in `dir`, running
-/// `command` (a stand-in, by name) when this returns. Returns the session
-/// and its block.
-fn running(server: &Server, label: &str, dir: &Path, command: &str) -> (String, String) {
-    let fixture = server.create_session(label, &[window(shell(dir))]);
-    server.wait_for_pwds(&fixture);
-    let block = fixture.block_ids()[0].to_string();
-    run_and_wait(server, &fixture.id, &block, dir, command);
-    (fixture.id, block)
-}
-
-/// Runs `command` in the block and waits until the stand-in it runs has
-/// started.
-fn run_and_wait(server: &Server, session: &str, block: &str, dir: &Path, command: &str) {
-    let program = command.split_whitespace().next().unwrap();
-    let ran = runs(dir, program).len();
-    server.run(session, block, command);
-    wait_for(&format!("{command} to start"), || {
-        (runs(dir, program).len() > ran).then_some(())
-    });
-}
-
-/// Saves, kills the session, restores, and returns the restored session and
-/// its one block.
-fn restarted(env: &TestEnv, server: &Server, session: &str, label: &str) -> (String, String) {
-    env.save(server);
-    server.kill_session(session);
-    env.restore(server);
-    let restored = server.the_session_labelled(label);
-    let block = server.block_ids(&restored).remove(0);
-    (restored, block)
-}
-
-/// Waits until the stand-in `program` in `dir` has run `count` times, and
-/// returns how each run was started.
-fn wait_for_runs(dir: &Path, program: &str, count: usize) -> Vec<String> {
-    wait_for(&format!("{program} to have run {count} times"), || {
-        let runs = runs(dir, program);
-        (runs.len() >= count).then_some(runs)
-    })
-}
 
 #[test]
 fn a_listed_neovim_where_a_session_vim_is_comes_back_running_nvim_dash_s_in_its_shell() {
