@@ -3,6 +3,8 @@
 //! anything for (no recorder file), because no recorder is installed or its
 //! shell started before one was, or it has no shell.
 
+use std::path::Path;
+
 use crate::error::Result;
 use crate::process;
 use crate::rex::api::{ProcessInfo, TerminalProcess};
@@ -22,6 +24,70 @@ pub fn foreground_command(process: &TerminalProcess) -> Result<Option<String>> {
         Some(program) if !program.names().any(|name| name == REXURRECT) => command_line(program),
         _ => Ok(None),
     }
+}
+
+/// Every name `program` goes by (see [`ProcessInfo::names`]) and, if it's
+/// an interpreter, the file name of the script it runs, from its arguments
+/// as the kernel holds them (see [`script_name`]): npm's Codex goes by
+/// `node`, and only its script is `codex`.
+pub fn program_names(program: &ProcessInfo) -> Result<Vec<String>> {
+    let arguments = if program.names().any(|name| INTERPRETERS.contains(&name)) {
+        process::arguments(program.pid)?
+    } else {
+        None
+    };
+    Ok(program
+        .names()
+        .chain(arguments.as_deref().and_then(script_name))
+        .map(str::to_string)
+        .collect())
+}
+
+/// The interpreters whose script, not the interpreter, is the program: an
+/// npm-installed agent's process is `node`, running the agent's script.
+const INTERPRETERS: &[&str] = &["node", "bun", "python", "python3", "ruby", "perl"];
+
+/// The interpreters' options that run code, or a module, in place of a
+/// script.
+const CODE_OPTIONS: &[&str] = &["-e", "--eval", "-p", "--print", "-c", "-m"];
+
+/// The interpreters' options whose value is the next argument, which
+/// mustn't be taken for the script (`node -r dotenv/config app.js`).
+const OPTIONS_WITH_VALUES: &[&str] = &[
+    "-r",
+    "--require",
+    "--import",
+    "--loader",
+    "--experimental-loader",
+    "-W",
+    "-X",
+];
+
+/// The file name of the script an interpreter runs, from its `arguments`,
+/// its own name first: `codex` for `node /opt/homebrew/bin/codex resume`.
+/// The script is the first argument that isn't an option or an option's
+/// value, or the one after `--`. `None` if it runs none: code given in its
+/// arguments (`node -e …`, `python3 -c …`) or a module (`python3 -m …`), or
+/// nothing at all (a REPL). The name is as it is: `node app.js` runs
+/// `app.js`, never `app`, as every other name matches exactly.
+fn script_name(arguments: &[String]) -> Option<&str> {
+    let mut rest = arguments.iter().skip(1);
+    let script = loop {
+        let argument = rest.next()?;
+        match argument.as_str() {
+            "--" => break rest.next()?,
+            option if CODE_OPTIONS.contains(&option) => return None,
+            option if option.starts_with("--eval=") || option.starts_with("--print=") => {
+                return None;
+            }
+            option if OPTIONS_WITH_VALUES.contains(&option) => {
+                rest.next();
+            }
+            option if option.starts_with('-') => {}
+            _ => break argument,
+        }
+    };
+    Path::new(script).file_name()?.to_str()
 }
 
 /// `program`'s command line, as restore would type it (see [`zsh_line`]),
@@ -116,6 +182,45 @@ mod tests {
             home: "/home/u".into(),
         };
         assert_eq!(foreground_command(&process).unwrap(), None);
+    }
+
+    fn script(arguments: &[&str]) -> Option<String> {
+        let arguments: Vec<String> = arguments.iter().map(|a| a.to_string()).collect();
+        script_name(&arguments).map(str::to_string)
+    }
+
+    /// An npm-installed program runs as its interpreter, with the path the
+    /// shell found it by as the script.
+    #[test]
+    fn an_interpreters_script_is_its_first_argument_that_isnt_an_option() {
+        assert_eq!(
+            script(&["node", "/opt/homebrew/bin/codex", "resume", "x"]).as_deref(),
+            Some("codex")
+        );
+        assert_eq!(
+            script(&["/usr/local/bin/node", "--no-warnings", "/u/bin/codex"]).as_deref(),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn an_options_value_isnt_the_script_and_the_argument_after_dash_dash_is() {
+        assert_eq!(
+            script(&["node", "-r", "dotenv/config", "/u/bin/codex"]).as_deref(),
+            Some("codex")
+        );
+        assert_eq!(script(&["node", "--", "/u/bin/pi"]).as_deref(), Some("pi"));
+        assert_eq!(script(&["node", "app.js"]).as_deref(), Some("app.js"));
+    }
+
+    #[test]
+    fn an_interpreter_running_code_from_its_arguments_or_nothing_runs_no_script() {
+        assert_eq!(script(&["node", "-e", "require('/u/bin/codex')"]), None);
+        assert_eq!(script(&["python3", "-c", "import codex"]), None);
+        assert_eq!(script(&["python3", "-m", "codex"]), None);
+        assert_eq!(script(&["node", "--eval=1", "/u/bin/codex"]), None);
+        assert_eq!(script(&["node"]), None);
+        assert_eq!(script(&[]), None);
     }
 
     #[test]

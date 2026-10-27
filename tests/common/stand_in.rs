@@ -11,6 +11,7 @@ use std::process::Command;
 
 use super::env::TestEnv;
 use super::fixture::{shell, window};
+use super::rexurrect::RunOutput;
 use super::server::{Server, wait_for};
 
 const SOURCE: &str = r#"fn main() {
@@ -141,4 +142,21 @@ pub fn restored_with_typed(
     let (restored, block) = restarted(env, server, session, label);
     server.wait_for_typed(&restored, &block, typed);
     (restored, block)
+}
+
+/// Runs `rexurrect report` with `args` in the block `block_id` (its
+/// `REX_BLOCK`), fed `stdin`, as a hook in it would.
+pub fn report(
+    env: &TestEnv,
+    server: &Server,
+    block_id: &str,
+    args: &[&str],
+    stdin: &str,
+) -> RunOutput {
+    env.rexurrect(server)
+        .env("REX_BLOCK", block_id)
+        .arg("report")
+        .args(args)
+        .stdin(stdin)
+        .run()
 }

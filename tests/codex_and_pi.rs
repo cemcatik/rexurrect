@@ -27,14 +27,10 @@ fn codex_session_start(session_id: &str) -> String {
     .to_string()
 }
 
-fn report(env: &TestEnv, server: &Server, block_id: &str, args: &[&str], stdin: &str) {
-    let out = env
-        .rexurrect(server)
-        .env("REX_BLOCK", block_id)
-        .arg("report")
-        .args(args)
-        .stdin(stdin)
-        .run();
+/// [`report`]s as a hook in the block would, and checks that `report`
+/// printed nothing, as it never does.
+fn reported(env: &TestEnv, server: &Server, block_id: &str, args: &[&str], stdin: &str) {
+    let out = report(env, server, block_id, args, stdin);
     assert!(
         out.status.success() && out.stdout.is_empty() && out.stderr.is_empty(),
         "{out}"
@@ -49,7 +45,7 @@ fn a_block_running_codex_that_reported_its_thread_comes_back_with_codex_resume_t
     let dir = env.mkdir("a");
     let (session, block) = running(&server, "zz-codex", &dir, "codex");
 
-    report(
+    reported(
         &env,
         &server,
         &block,
@@ -78,6 +74,7 @@ fn a_program_an_interpreter_runs_is_matched_by_its_scripts_name() {
     std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     let server = env.start_server();
     let dir = env.mkdir("a");
+    // Not `running`: what runs is `node`, not the `codex` typed.
     let fixture = server.create_session("zz-npm", &[window(shell(&dir))]);
     server.wait_for_pwds(&fixture);
     let block = fixture.block_ids()[0].to_string();
@@ -87,7 +84,7 @@ fn a_program_an_interpreter_runs_is_matched_by_its_scripts_name() {
         [script.display().to_string()]
     );
 
-    report(
+    reported(
         &env,
         &server,
         &block,
@@ -113,7 +110,7 @@ fn a_block_running_pi_that_reported_its_session_file_comes_back_with_it_typed() 
     let (session, block) = running(&server, "zz-pi", &dir, "pi");
     let file = "/Users/u/.pi/agent/sessions/--w-a--/2026-10-27T16-05-00-000Z_s.jsonl";
 
-    report(&env, &server, &block, &["pi", file], "");
+    reported(&env, &server, &block, &["pi", file], "");
 
     restored_with_typed(
         &env,

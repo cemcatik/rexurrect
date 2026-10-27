@@ -67,7 +67,7 @@ pub use scheduled::{NO_SERVER, assert_explains_backing_out, run_job, write_scrip
 pub use server::{Server, SessionSummary};
 pub use sleeper::build_sleeper;
 pub use stand_in::{
-    build_stand_in, restarted, restarted_after, restored_with_typed, run_and_wait, running, runs,
-    stand_in_bin, wait_for_runs, write_session_vim,
+    build_stand_in, report, restarted, restarted_after, restored_with_typed, run_and_wait, running,
+    runs, stand_in_bin, wait_for_runs, write_session_vim,
 };
 pub use stub::RexStub;

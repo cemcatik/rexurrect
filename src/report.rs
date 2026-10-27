@@ -120,16 +120,19 @@ fn store(
         return because("this program reports no resume state");
     }
     let value = match (&options.value, definition.hook) {
-        (Some(value), _) => value.clone(),
-        (None, Some(hook @ (Hook::ClaudeCode | Hook::Codex))) => {
+        (Some(value), _) => Some(value.clone()),
+        (None, Some(Hook::ClaudeCode)) => claude_code_value(&read_stdin()?)?,
+        (None, Some(Hook::Codex)) => {
             let inherited_thread = settings::env_non_empty(CODEX_THREAD_VAR);
-            let inherited_thread = inherited_thread.as_deref().and_then(|id| id.to_str());
-            match payload_value(hook, &read_stdin()?, inherited_thread)? {
-                Some(value) => value,
-                None => return Err(Dropped::Quietly),
-            }
+            codex_value(
+                &read_stdin()?,
+                inherited_thread.as_deref().and_then(|id| id.to_str()),
+            )?
         }
         (None, _) => return because("no value was given"),
+    };
+    let Some(value) = value else {
+        return Err(Dropped::Quietly);
     };
     if !definition.state.accepts(&value) {
         return because(&format!("the value isn't {}", definition.state.described()));
@@ -177,29 +180,40 @@ struct HookPayload {
     agent_id: Option<serde_json::Value>,
 }
 
-/// The value in a built-in agent's hook payload: `None` for a payload to
-/// ignore (a Claude Code subagent's, or a Codex's whose `inherited_thread`,
-/// its `CODEX_THREAD_ID`, names another thread). pi passes no payload.
-fn payload_value(
-    hook: Hook,
+impl HookPayload {
+    /// The payload in `bytes`, from `agent`'s hook ("a Claude Code"), if it
+    /// has a `session_id`.
+    fn read(bytes: &[u8], agent: &str) -> std::result::Result<(HookPayload, String), Dropped> {
+        let mut payload: HookPayload = serde_json::from_slice(bytes).map_err(|_| {
+            Dropped::Because(format!("the hook's payload isn't {agent} hook's JSON"))
+        })?;
+        let session_id = payload
+            .session_id
+            .take()
+            .ok_or_else(|| Dropped::Because("the hook's payload has no session_id".into()))?;
+        Ok((payload, session_id))
+    }
+}
+
+/// The agent conversation in a Claude Code hook's payload: `None` for a
+/// subagent's, to ignore.
+fn claude_code_value(bytes: &[u8]) -> std::result::Result<Option<String>, Dropped> {
+    let (payload, session_id) = HookPayload::read(bytes, "a Claude Code")?;
+    let subagent = payload.agent_id.is_some_and(|id| !id.is_null());
+    Ok((!subagent).then_some(session_id))
+}
+
+/// The thread in a Codex hook's payload: `None`, to ignore, if
+/// `inherited_thread`, the hook's `CODEX_THREAD_ID`, names another, as
+/// herdr does: a Codex started from inside another's (by its shell tool)
+/// inherits that one's, and mustn't take over the block.
+fn codex_value(
     bytes: &[u8],
     inherited_thread: Option<&str>,
 ) -> std::result::Result<Option<String>, Dropped> {
-    let agent = match hook {
-        Hook::ClaudeCode => "a Claude Code",
-        Hook::Codex => "a Codex",
-        Hook::Pi => return Err(Dropped::Because("pi's extension passes no payload".into())),
-    };
-    let payload: HookPayload = serde_json::from_slice(bytes)
-        .map_err(|_| Dropped::Because(format!("the hook's payload isn't {agent} hook's JSON")))?;
-    let session_id = payload
-        .session_id
-        .ok_or_else(|| Dropped::Because("the hook's payload has no session_id".into()))?;
-    let ignored = match hook {
-        Hook::ClaudeCode => payload.agent_id.is_some_and(|id| !id.is_null()),
-        _ => inherited_thread.is_some_and(|thread| thread != session_id),
-    };
-    Ok((!ignored).then_some(session_id))
+    let (_, session_id) = HookPayload::read(bytes, "a Codex")?;
+    let nested = inherited_thread.is_some_and(|thread| thread != session_id);
+    Ok((!nested).then_some(session_id))
 }
 
 /// Logs `report`'s failures to `rexurrect.log`, each cause once: a hook
@@ -262,11 +276,12 @@ fn print_hook(options: &ReportOptions) -> Result<ExitCode> {
         .programs
         .get(program)
         .ok_or_else(|| Error::new(format!("no program definition is named {program:?}")))?;
-    let command = report_command(program)?;
+    let pinned = Pinned::here()?;
+    let command = report_command(&pinned, program);
     match definition.hook {
         Some(Hook::ClaudeCode) => print!("{}", session_start_hook(&command)),
         Some(Hook::Codex) => print!("{}", codex_hook(&command)),
-        Some(Hook::Pi) => print!("{}", pi_extension(program)?),
+        Some(Hook::Pi) => print!("{}", pi_extension(&pinned, program)),
         None if definition.state == StateKind::None => {
             return Err(Error::new(format!(
                 "{program} reports no resume state, so it needs no hook"
@@ -299,17 +314,17 @@ impl Pinned {
 /// The command a hook runs: `REXURRECT_STATE_DIR=… REXURRECT_CONFIG=…
 /// <rexurrect> report <program>`, each value quoted for the shell. Single
 /// quotes, where needed, mean the same to `sh` and zsh.
-fn report_command(program: &str) -> Result<String> {
-    let pinned = Pinned::here()?;
-    Ok(format!(
+fn report_command(pinned: &Pinned, program: &str) -> String {
+    format!(
         "{STATE_DIR_VAR}={} {CONFIG_VAR}={} {} report {}",
         foreground::quoted(&pinned.state_dir),
         foreground::quoted(&pinned.config_file),
         foreground::quoted(&pinned.rexurrect),
         foreground::quoted(program),
-    ))
+    )
 }
 
+/// `path` as a string, which a hook's command or code can hold.
 fn utf8(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_string)
@@ -328,16 +343,18 @@ fn codex_hook(command: &str) -> String {
     )
 }
 
-/// The pi extension for `~/.pi/agent/extensions/`, reporting its session
-/// file as `program` whenever a session starts: at startup, and after
-/// `/new`, `/resume` and `/fork`, each of which starts the extension again.
+/// The pi extension for `~/.pi/agent/extensions/`, reporting the session
+/// file of the conversation on screen as `program` whenever pi starts one:
+/// at startup, and after `/new`, `/resume` and `/fork`, each of which
+/// starts the extension again.
 /// Only in pi's TUI: `pi -p` and its other modes run headless, as tools
-/// inside another program, and mustn't take over the block. As herdr's.
-fn pi_extension(program: &str) -> Result<String> {
-    let pinned = Pinned::here()?;
+/// inside another program, and mustn't take over the block. As herdr's, it
+/// keeps quiet rather than throw inside pi if pi's API isn't what it
+/// expects.
+fn pi_extension(pinned: &Pinned, program: &str) -> String {
     let js = |value: &str| serde_json::to_string(value).expect("strings serialize");
-    Ok(format!(
-        r#"// Reports pi's session to rexurrect, so that a block running pi in Rex
+    format!(
+        r#"// Reports pi's conversation to rexurrect, so that a block running pi in Rex
 // resumes it after a restart. Printed by `rexurrect report {program} --print-hook`;
 // print it again if rexurrect, its state directory or its config file moves.
 import {{ execFile }} from "node:child_process";
@@ -347,8 +364,14 @@ const ENV = {{ {STATE_DIR_VAR}: {state_dir}, {CONFIG_VAR}: {config_file} }};
 
 export default function (pi) {{
   pi.on("session_start", (_event, ctx) => {{
-    const file = ctx.mode === "tui" ? ctx.sessionManager.getSessionFile() : undefined;
-    if (!file) return;
+    if (ctx.mode !== "tui") return;
+    let file;
+    try {{
+      file = ctx.sessionManager.getSessionFile();
+    }} catch {{
+      return;
+    }}
+    if (typeof file !== "string") return;
     execFile(REXURRECT, ["report", {program_js}, file], {{ env: {{ ...process.env, ...ENV }} }}, () => {{}});
   }});
 }}
@@ -357,7 +380,7 @@ export default function (pi) {{
         state_dir = js(&pinned.state_dir),
         config_file = js(&pinned.config_file),
         program_js = js(program),
-    ))
+    )
 }
 
 /// The `SessionStart` hook for `~/.claude/settings.json` (and Codex's
@@ -391,17 +414,19 @@ mod tests {
         assert!(!is_block_id(&"b".repeat(MAX_BLOCK_ID_LEN + 1)));
     }
 
-    fn value(hook: Hook, payload: &str, inherited_thread: Option<&str>) -> Option<String> {
-        payload_value(hook, payload.as_bytes(), inherited_thread).unwrap_or_else(|dropped| {
-            match dropped {
-                Dropped::Quietly => None,
-                Dropped::Because(cause) => Some(format!("dropped: {cause}")),
-            }
+    fn shown(value: std::result::Result<Option<String>, Dropped>) -> Option<String> {
+        value.unwrap_or_else(|dropped| match dropped {
+            Dropped::Quietly => None,
+            Dropped::Because(cause) => Some(format!("dropped: {cause}")),
         })
     }
 
     fn claude(payload: &str) -> Option<String> {
-        value(Hook::ClaudeCode, payload, None)
+        shown(claude_code_value(payload.as_bytes()))
+    }
+
+    fn codex(payload: &str, inherited_thread: Option<&str>) -> Option<String> {
+        shown(codex_value(payload.as_bytes(), inherited_thread))
     }
 
     /// As Codex 0.165 sends it.
@@ -410,33 +435,23 @@ mod tests {
     #[test]
     fn a_codex_payload_reports_its_session_id() {
         assert_eq!(
-            value(Hook::Codex, CODEX_SESSION_START, None).as_deref(),
+            codex(CODEX_SESSION_START, None).as_deref(),
             Some("019a3c2b-1d4e")
         );
         assert_eq!(
-            value(Hook::Codex, CODEX_SESSION_START, Some("019a3c2b-1d4e")).as_deref(),
+            codex(CODEX_SESSION_START, Some("019a3c2b-1d4e")).as_deref(),
             Some("019a3c2b-1d4e")
         );
     }
 
-    /// As herdr does: a Codex started from inside another's (by its shell
-    /// tool) inherits that one's `CODEX_THREAD_ID`, and mustn't take over
-    /// the block.
     #[test]
     fn a_codex_payload_for_another_thread_than_the_inherited_one_is_ignored() {
-        assert_eq!(
-            value(Hook::Codex, CODEX_SESSION_START, Some("019-outer")),
-            None
-        );
+        assert_eq!(codex(CODEX_SESSION_START, Some("019-outer")), None);
     }
 
     #[test]
     fn a_codex_payload_without_a_session_id_is_dropped() {
-        assert!(
-            value(Hook::Codex, "{}", None)
-                .unwrap()
-                .starts_with("dropped:")
-        );
+        assert!(codex("{}", None).unwrap().starts_with("dropped:"));
     }
 
     #[test]

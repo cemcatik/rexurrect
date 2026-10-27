@@ -322,8 +322,8 @@ Built in:
 | --- | --- | --- |
 | Neovim (`nvim`) | `nvim -S` | a `Session.vim` is in the block's working directory |
 | Claude Code (`claude`) | `claude --resume <conversation ID>` | its hook has reported the conversation |
-| Codex (`codex`) | `codex resume <thread ID>` | its hook has reported the thread |
-| pi (`pi`) | `pi --session <session file>` | its extension has reported the session |
+| Codex (`codex`) | `codex resume <conversation ID>` | its hook has reported the conversation |
+| pi (`pi`) | `pi --session <conversation's session file>` | its extension has reported the conversation |
 
 Some programs need to tell rexurrect something for it to resume them: an agent its conversation's
 ID, say. That's the program's **resume state**, and the program reports it with
@@ -416,10 +416,11 @@ itself: a reply it was in the middle of when the server stopped is gone, so ask 
 
 ### Codex
 
-Codex reports its thread from a `SessionStart` hook, which, as Claude Code's, runs whenever a
-thread starts, resumes, or is cleared, compacted or forked. A Codex started from inside another
-Codex (by its agent, say) doesn't change the block: it inherits the outer one's
-`CODEX_THREAD_ID`, and its reports for any other thread are ignored, as herdr does. Print the
+Codex reports its conversation (Codex calls it a thread) from a `SessionStart` hook, which, as
+Claude Code's, runs whenever a conversation starts, resumes, or is cleared, compacted or forked.
+A Codex started from inside another Codex (by its agent, say) doesn't change the block: it
+inherits the outer one's `CODEX_THREAD_ID`, and its reports for any other conversation are
+ignored, as herdr does. Print the
 hook and the line that turns Codex's hooks on:
 
 ```sh
@@ -450,13 +451,16 @@ hooks = true
 
 Add the `SessionStart` entry to `hooks.json` beside any hooks it has, and `hooks = true` to the
 `[features]` table of `config.toml` (in `$CODEX_HOME` instead of `~/.codex`, if you set it).
-From then on, a block that was running `codex` comes back with `codex resume <its thread>`
-typed. Codex installed with npm runs as `node`, and is matched by its script's name, `codex`.
+Codex runs a hook only once you trust it: the next time it starts, it says the hook needs
+review, and you trust it there. It asks again whenever the hook's command changes, as it does
+when you print it again after moving rexurrect.
+From then on, a block that was running `codex` comes back with `codex resume <its
+conversation>` typed. Codex installed with npm runs as `node`, and is matched by its script's name, `codex`.
 
 ### pi
 
-pi reports its session file from an extension, which runs whenever a session starts: when pi
-starts, and after `/new`, `/resume` and `/fork`. Only in pi's interactive mode: `pi -p` and its
+pi reports its conversation's session file from an extension, which runs whenever pi starts a
+conversation: when pi starts, and after `/new`, `/resume` and `/fork`. Only in pi's interactive mode: `pi -p` and its
 other modes never change the block. Print the extension straight into pi's extensions
 directory:
 
@@ -466,7 +470,8 @@ rexurrect report pi --print-hook > ~/.pi/agent/extensions/rexurrect.ts
 
 (`$PI_CODING_AGENT_DIR/extensions/` instead, if you set it.) It names rexurrect by its full path
 and pins the state directory and config file, so print it again if you move any of them. From
-then on, a block that was running `pi` comes back with `pi --session <its session file>` typed.
+then on, a block that was running `pi` comes back with `pi --session <its conversation's session
+file>` typed.
 
 ### Auto-resume
 
