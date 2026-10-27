@@ -20,6 +20,10 @@
 #   keeps the PID, so the outermost shell carries on recording after it.
 # - Records from zsh's preexec hook, as a command starts, so a program still
 #   running at save time (nvim, a dev server) counts too.
+# - Rewrites the block's record, unchanged, from zsh's precmd hook, each time
+#   the prompt comes back, so restore can tell a program that was running at
+#   the last save had exited before the server stopped. It never creates a
+#   record that way.
 # - Ignores a command that spans several lines or holds any other control
 #   character, keeping the previous record: typed back at a prompt, a line
 #   break would act as Enter.
@@ -56,6 +60,11 @@
 #   then doesn't fall back to the program in its foreground either (that
 #   fallback is only for blocks with no file at all). This recorder never
 #   writes one: it only records commands.
+# - A recorder should rewrite the record, unchanged, each time the shell's
+#   prompt comes back, and never create one that way. A record written after
+#   a snapshot was taken tells restore the shell got control back after that
+#   save: a program the save found running in the block had exited, so the
+#   block doesn't resume it. Optional: without it, such a block resumes.
 # - Written to a temporary file in the same directory whose name starts with
 #   `.`, then renamed over the record, so a reader never sees half a command.
 #   A save removes such a file once it has gone unchanged for an hour (left
@@ -85,17 +94,43 @@ _rexurrect_record() {
   # character disqualifies it, tab included: typed back, a tab completes.
   [[ -n $1 && $1 != *[[:cntrl:]]* && -n $REX_BLOCK ]] || return 0
   _rexurrect_ignored "$1" && return 0
-  local dir
+  _rexurrect_write "$1"
+}
+
+# Rewrites the block's record unchanged as the prompt comes back, so its
+# modification time says when the shell last had control: a record changed
+# after a save means the program that save saw running had exited. Never
+# creates a record: a block with nothing recorded keeps having none.
+_rexurrect_rewrite() {
+  emulate -L zsh
+  local REPLY
+  [[ -n $REX_BLOCK ]] && _rexurrect_dir || return 0
+  local file=$REPLY/$REX_BLOCK record
+  [[ -f $file ]] || return 0
+  # $(<file) reads the file without forking.
+  { record=$(<$file) } 2>/dev/null || return 0
+  _rexurrect_write "$record"
+}
+
+# Sets REPLY to the recorder directory; fails if there's none to use.
+_rexurrect_dir() {
   if [[ -n $REXURRECT_STATE_DIR ]]; then
-    dir=$REXURRECT_STATE_DIR
+    REPLY=$REXURRECT_STATE_DIR
   elif [[ $XDG_STATE_HOME == /* ]]; then
-    dir=$XDG_STATE_HOME/rexurrect
+    REPLY=$XDG_STATE_HOME/rexurrect
   elif [[ -n $HOME ]]; then
-    dir=$HOME/.local/state/rexurrect
+    REPLY=$HOME/.local/state/rexurrect
   else
-    return 0
+    return 1
   fi
-  dir+=/recorder
+  REPLY+=/recorder
+}
+
+# Writes $1 as the block's record: to a temporary file, renamed over it.
+_rexurrect_write() {
+  local REPLY
+  _rexurrect_dir || return 0
+  local dir=$REPLY
   local file=$dir/$REX_BLOCK tmp=$dir/.$REX_BLOCK.$$
   {
     if [[ ! -d $dir ]]; then
@@ -128,4 +163,5 @@ _rexurrect_record() {
   zmodload -F zsh/files b:zf_mkdir b:zf_mv 2>/dev/null
   autoload -Uz add-zsh-hook
   add-zsh-hook preexec _rexurrect_record
+  add-zsh-hook precmd _rexurrect_rewrite
 }

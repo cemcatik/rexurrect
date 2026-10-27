@@ -9,9 +9,11 @@ use crate::config::Config;
 use crate::create;
 use crate::defaults::DefaultCommands;
 use crate::error::{Context, Error, Result};
+use crate::exited;
 use crate::instance::RestoreLock;
 use crate::lineage::{Lineage, LineageMap};
 use crate::log;
+use crate::recorder::RecorderFiles;
 use crate::resume::{Input, Resuming};
 use crate::rex::Rex;
 use crate::rex::api::{CreatedSession, ServerStatus};
@@ -251,6 +253,7 @@ fn restore_sessions(
     let mut defaults = DefaultCommands::load(state)?;
     let replay = Replay::new(state);
     let mut resuming = Resuming::new(&config.programs, &config.auto_resume);
+    let recorder = RecorderFiles::new(state);
 
     let mut report = RestoreReport {
         snapshot: Some(snapshot_id.clone()),
@@ -270,7 +273,8 @@ fn restore_sessions(
             report.outcomes.push(Outcome::WouldCreate { label });
             continue;
         }
-        let as_created = create::as_created(saved, &home, &replay);
+        let saved = exited::as_left(saved, &recorder, snapshot.taken_at)?;
+        let as_created = create::as_created(&saved, &home, &replay);
         let inputs: Vec<Option<Input>> = as_created.blocks().map(|b| resuming.input(b)).collect();
         let keystrokes: Vec<Option<String>> = inputs
             .iter()

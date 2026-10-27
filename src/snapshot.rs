@@ -175,6 +175,12 @@ pub struct SavedBlock {
     /// Absent from snapshots taken before rexurrect resumed programs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<SavedResume>,
+    /// The live block's ID at the save, which names its recorder file: a
+    /// restore before that file is pruned can tell whether the block's
+    /// shell got its prompt back after the save (see `exited`). Absent from
+    /// snapshots taken before #60, and for blocks that aren't local shells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_id: Option<String>,
 }
 
 /// A block's resumable program, as save found it.
@@ -219,5 +225,17 @@ mod tests {
         let resume = block.resume.unwrap();
         assert_eq!(resume.program, "nvim");
         assert_eq!(resume.command_line.as_deref(), Some("nvim init.lua"));
+    }
+
+    /// Snapshots taken before #60 name no block, so restore can't tell
+    /// whether a resumable block's program exited after them: it resumes.
+    #[test]
+    fn a_resumable_block_saved_before_block_ids_were_kept_names_no_block() {
+        let block: SavedBlock = serde_json::from_value(json!({
+            "working_directory": "/w/a",
+            "resume": { "program": "nvim" },
+        }))
+        .unwrap();
+        assert_eq!(block.block_id, None);
     }
 }

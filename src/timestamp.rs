@@ -29,6 +29,11 @@ impl Timestamp {
         self.duration().checked_sub(earlier.duration())
     }
 
+    /// This moment as a `SystemTime`, to compare with a file's.
+    pub fn system_time(&self) -> SystemTime {
+        UNIX_EPOCH + self.duration()
+    }
+
     fn duration(&self) -> Duration {
         Duration::new(self.secs, self.micros * 1000)
     }

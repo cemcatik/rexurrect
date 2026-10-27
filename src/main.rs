@@ -11,6 +11,7 @@ mod config;
 mod create;
 mod defaults;
 mod error;
+mod exited;
 mod foreground;
 mod instance;
 mod label;
