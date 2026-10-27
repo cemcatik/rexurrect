@@ -447,3 +447,27 @@ fn report_prints_nothing_whatever_its_arguments() {
     }
     assert!(!files::has_entries(&env.state_dir().join("resume")));
 }
+
+/// #69: a `REX_BLOCK` that's set but empty is outside Rex, as an unset one
+/// is: nothing to report and nothing to log, as for every other variable
+/// rexurrect reads.
+#[test]
+fn report_with_an_empty_rex_block_does_nothing_and_logs_nothing() {
+    let env = TestEnv::new();
+    let server = env.start_server();
+
+    let out = report(
+        &env,
+        &server,
+        "",
+        &["claude"],
+        &session_start(CONVERSATION, "startup"),
+    );
+
+    assert!(
+        out.status.success() && out.stdout.is_empty() && out.stderr.is_empty(),
+        "{out}"
+    );
+    assert_eq!(env.log_entries(), Vec::<String>::new());
+    assert!(!files::has_entries(&env.state_dir().join("resume")));
+}
