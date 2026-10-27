@@ -52,7 +52,8 @@ pub struct Config {
     /// `app_session_watch`: how long auto-restore looks for the app session
     /// after restoring (30 seconds).
     pub app_session_watch: Duration,
-    /// The program definitions blocks resume by: the built-in ones.
+    /// `programs`: the program definitions blocks resume by, the built-in
+    /// ones as `[programs.<name>]` tables change and add to them.
     pub programs: Programs,
     /// `auto_resume`: the program definitions whose programs restore runs
     /// rather than types (ADR-0006); none by default.
@@ -110,6 +111,7 @@ impl Config {
                     config.app_session_watch =
                         seconds(value).ok_or_else(|| wrong(SECONDS_WANTED))?;
                 }
+                "programs" => config.programs = Programs::configured(value, path)?,
                 "auto_resume" => {
                     config.auto_resume = program_names(value)
                         .ok_or_else(|| wrong("a list of program names, like [\"nvim\"]"))?;
@@ -140,12 +142,13 @@ impl Config {
 }
 
 /// Every key the file can set.
-const KEYS: [&str; 5] = [
+const KEYS: [&str; 6] = [
     "keep",
     "no_scrollback",
     "ready_timeout",
     "app_session_watch",
     "auto_resume",
+    "programs",
 ];
 
 const SECONDS_WANTED: &str = "a whole number of seconds, at least 1";
@@ -163,7 +166,7 @@ fn seconds(value: &toml::Value) -> Option<Duration> {
 }
 
 /// A TOML array of strings.
-fn program_names(value: &toml::Value) -> Option<Vec<String>> {
+pub fn program_names(value: &toml::Value) -> Option<Vec<String>> {
     value
         .as_array()?
         .iter()

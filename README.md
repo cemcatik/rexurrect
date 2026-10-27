@@ -10,8 +10,9 @@ needs nothing else at runtime.
 > each window's split layout and ratios, window and block labels you set, each block's working
 > directory, each block's earlier output above its prompt, and each block's last command typed
 > at that prompt: the one the zsh recorder recorded or, without one, the program running in
-> the block or last seen running there. Autosave runs `save` every 15 minutes, and auto-restore
-> runs `restore` when the Rex server starts.
+> the block or last seen running there. A block that was running Neovim or Claude Code can come
+> back with it resumed. Autosave runs `save` every 15 minutes, and auto-restore runs `restore`
+> when the Rex server starts.
 
 ## Install
 
@@ -339,6 +340,29 @@ rexurrect never writes Neovim sessions: your session manager does. With vim-obse
 on exit when its terminal goes away, so a session manager that saves on exit has saved by the
 time the Rex server is gone.
 
+With another session manager, point the built-in definition at it (see
+[Your own definitions](#your-own-definitions)):
+
+```toml
+# persistence.nvim, which LazyVim uses: it keeps its sessions elsewhere, and load() is safe
+# without one.
+[programs.nvim]
+resume = "nvim -c 'lua require(\"persistence\").load()'"
+requires_file = ""
+
+# resession, with a session per directory:
+[programs.nvim]
+resume = "nvim -c 'lua require(\"resession\").load(vim.fn.getcwd(), { dir = \"dirsession\", silence_errors = true })'"
+requires_file = ""
+
+# auto-session:
+[programs.nvim]
+resume = "nvim -c SessionRestore"
+requires_file = ""
+```
+
+(Pick one: a file can have only one `[programs.nvim]`.)
+
 [vim-obsession]: https://github.com/tpope/vim-obsession
 
 ### Claude Code
@@ -408,6 +432,58 @@ reruns `make edit` or `git commit`. A program whose command line couldn't be rea
 An auto-resumed program starts as soon as restore creates its block, which, under auto-restore,
 may be before the Rex app has attached to the server.
 
+A program listed in `auto_resume` whose definition sets `fallback = "none"` comes back with its
+last command typed instead, when it can't resume.
+
+### Your own definitions
+
+Change a built-in definition, or add one for a program rexurrect doesn't know, in the
+[config file](#settings), with no code from rexurrect. A `[programs.<name>]` table holds a
+definition's fields:
+
+| Field | What it is | For a new program |
+| --- | --- | --- |
+| `match` | The program names it matches: the name it was run by or its executable's | `[<name>]` |
+| `state` | The resume state the program reports: `"none"`, `"id"` or `"path"` (absolute) | `"none"` |
+| `resume` | The resume command; `{state}` stands for the reported value, quoted where zsh needs it | required |
+| `requires_file` | A file that must be in the block's working directory for it to resume | none |
+| `fallback` | What an auto-resumed program that can't resume runs: `"command"`, its own command line, or `"none"`, its last command typed | `"command"` |
+| `enabled` | `false` turns the definition off | `true` |
+
+A table named like a built-in (`nvim`, `claude`) overrides it field by field: the fields you set
+replace the built-in's, and the rest keep the built-in's. `requires_file = ""` removes the
+built-in's requirement, and `enabled = false` turns it off, so its blocks come back with their
+last command. `resume` uses `{state}` exactly when `state` isn't `"none"`. Each definition's
+name goes in `auto_resume` and after `rexurrect report`. If a program matches several
+definitions, yours come before the built-ins, in name order.
+
+A program of your own reports its state with `rexurrect report <name> <value>`, from its own
+hook or plugin, run in the block (where `REX_BLOCK` is set). `report` keeps the value only if
+it's the kind `state` says: say, a REPL that prints how to attach to it again:
+
+```toml
+auto_resume = ["myrepl"]
+
+[programs.myrepl]
+state = "id"
+resume = "myrepl --attach {state}"
+```
+
+```sh
+# In myrepl's startup hook:
+rexurrect report myrepl "$MYREPL_SESSION_ID"
+```
+
+`rexurrect report myrepl --print-hook` prints that command with rexurrect's full path, and the
+state directory and config file pinned.
+
+To keep a flag Claude Code was started with, add it to the built-in's command:
+
+```toml
+[programs.claude]
+resume = "claude --resume {state} --dangerously-skip-permissions"
+```
+
 ## Settings
 
 rexurrect reads its settings from one file, `~/.config/rexurrect/config.toml`, or
@@ -427,6 +503,9 @@ app_session_watch = 30
 # The programs that come back running, not just typed (see Resuming programs); [] for none.
 auto_resume = []
 ```
+
+`[programs.<name>]` tables change and add program definitions: see
+[Your own definitions](#your-own-definitions).
 
 Manual runs, autosave and auto-restore all read the same file, at every run, so an edit takes
 effect the next time any of them runs, with nothing to reinstall. Autosave and auto-restore run

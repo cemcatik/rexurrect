@@ -12,13 +12,21 @@
 //! - Claude Code, which reports its agent conversation's ID from a
 //!   `SessionStart` hook (see `report`).
 //!
+//! The config file's `[programs.<name>]` tables change a built-in field by
+//! field, turn one off (`enabled = false`), or add a program (see
+//! [`Programs::configured`]). A foreground program matching more than one
+//! definition gets the first: the user's own, in name order (TOML tables
+//! don't keep the file's), then the built-ins.
+//!
 //! A reported value is never a command: it only ever stands for
 //! [`STATE_PLACEHOLDER`] in a definition's resume command, after it passes
 //! [`StateKind::accepts`], quoted for zsh where it needs it.
 
 use std::path::Path;
 
+use crate::config;
 use crate::create;
+use crate::error::{Error, Result};
 use crate::foreground;
 use crate::rex::api::TerminalProcess;
 
@@ -39,7 +47,6 @@ pub enum StateKind {
     Id,
     /// The absolute path of a file, such as an agent conversation's session
     /// file.
-    #[allow(dead_code)] // No built-in reports one; user definitions will (#57).
     Path,
 }
 
@@ -92,6 +99,16 @@ pub enum Payload {
     ClaudeCode,
 }
 
+/// What an auto-resumed program that can't resume comes back as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fallback {
+    /// Its own command line from the save, run.
+    Command,
+    /// The block's last command, typed, as if it weren't auto-resumed.
+    None,
+}
+
+/// How rexurrect resumes one program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProgramDefinition {
     /// The definition's name, which a snapshot records and `report` takes.
@@ -99,6 +116,7 @@ pub struct ProgramDefinition {
     /// The program names it matches, by any name a foreground program goes
     /// by (see [`crate::rex::api::ProcessInfo::names`]).
     pub matches: Vec<String>,
+    /// The kind of resume state the program reports.
     pub state: StateKind,
     /// The resume command, a template: [`STATE_PLACEHOLDER`] stands for the
     /// reported value.
@@ -108,6 +126,9 @@ pub struct ProgramDefinition {
     pub requires_file: Option<String>,
     /// What a built-in agent's hook passes `report` on stdin.
     pub payload: Option<Payload>,
+    /// What the program comes back as when it auto-resumes but can't
+    /// resume.
+    pub fallback: Fallback,
 }
 
 impl ProgramDefinition {
@@ -152,6 +173,7 @@ impl Default for Programs {
                     resume: "nvim -S".to_string(),
                     requires_file: Some("Session.vim".to_string()),
                     payload: None,
+                    fallback: Fallback::Command,
                 },
                 ProgramDefinition {
                     name: "claude".to_string(),
@@ -160,13 +182,152 @@ impl Default for Programs {
                     resume: format!("claude --resume {STATE_PLACEHOLDER}"),
                     requires_file: None,
                     payload: Some(Payload::ClaudeCode),
+                    fallback: Fallback::Command,
                 },
             ],
         }
     }
 }
 
+/// Every field a `[programs.<name>]` table can set.
+const FIELDS: [&str; 6] = [
+    "match",
+    "state",
+    "resume",
+    "requires_file",
+    "fallback",
+    "enabled",
+];
+
 impl Programs {
+    /// The built-in definitions as the config file's `programs` table
+    /// (`value`, in the file at `file`) changes and adds to them. Each
+    /// `[programs.<name>]` table named like a built-in overrides it field by
+    /// field (`requires_file = ""` removes its requirement, `enabled =
+    /// false` turns it off); any other adds a program, which needs a
+    /// `resume`, and whose other fields default to `match = [<name>]`,
+    /// `state = "none"`, no required file and `fallback = "command"`.
+    ///
+    /// An error names the table and field: an unknown field, a value of the
+    /// wrong kind, a new program with no `resume`, or a `resume` that uses
+    /// `{state}` when `state` is `"none"`, or doesn't when it isn't.
+    pub fn configured(value: &toml::Value, file: &Path) -> Result<Programs> {
+        let file = file.display();
+        let tables = value.as_table().ok_or_else(|| {
+            Error::new(format!(
+                "`programs` in {file} must be tables of program definitions, like \
+                 [programs.nvim], not {value}"
+            ))
+        })?;
+        let mut builtins = Programs::default().definitions;
+        let mut added = Vec::new();
+        for (name, fields) in tables {
+            let fields = fields.as_table().ok_or_else(|| {
+                Error::new(format!(
+                    "`programs.{name}` in {file} must be a table of a program definition's \
+                     fields, not {fields}"
+                ))
+            })?;
+            let builtin = builtins.iter().position(|d| d.name == *name);
+            let mut definition = match builtin {
+                Some(i) => builtins[i].clone(),
+                None => ProgramDefinition {
+                    name: name.clone(),
+                    matches: vec![name.clone()],
+                    state: StateKind::None,
+                    resume: String::new(),
+                    requires_file: None,
+                    payload: None,
+                    fallback: Fallback::Command,
+                },
+            };
+            let mut enabled = true;
+            for (field, value) in fields {
+                let wrong = |what: &str| {
+                    Error::new(format!(
+                        "`programs.{name}.{field}` in {file} must be {what}, not {value}"
+                    ))
+                };
+                match field.as_str() {
+                    "match" => {
+                        definition.matches = config::program_names(value)
+                            .filter(|names| !names.is_empty())
+                            .ok_or_else(|| wrong("a list of program names, like [\"nvim\"]"))?;
+                    }
+                    "state" => {
+                        definition.state = match value.as_str() {
+                            Some("none") => StateKind::None,
+                            Some("id") => StateKind::Id,
+                            Some("path") => StateKind::Path,
+                            _ => return Err(wrong("\"none\", \"id\" or \"path\"")),
+                        };
+                    }
+                    "resume" => {
+                        definition.resume = value
+                            .as_str()
+                            .filter(|command| create::is_typeable(command))
+                            .ok_or_else(|| wrong("a command on one line"))?
+                            .to_string();
+                    }
+                    "requires_file" => {
+                        definition.requires_file = match value.as_str() {
+                            Some("") => None,
+                            Some(file) => Some(file.to_string()),
+                            None => return Err(wrong("a file name, or \"\" for none")),
+                        };
+                    }
+                    "fallback" => {
+                        definition.fallback = match value.as_str() {
+                            Some("command") => Fallback::Command,
+                            Some("none") => Fallback::None,
+                            _ => return Err(wrong("\"command\" or \"none\"")),
+                        };
+                    }
+                    "enabled" => {
+                        enabled = value.as_bool().ok_or_else(|| wrong("true or false"))?;
+                    }
+                    _ => {
+                        return Err(Error::new(format!(
+                            "`programs.{name}.{field}` in {file} isn't a field rexurrect knows; \
+                             it knows {}",
+                            FIELDS.join(", ")
+                        )));
+                    }
+                }
+            }
+            if builtin.is_none() && definition.resume.is_empty() {
+                return Err(Error::new(format!(
+                    "`programs.{name}` in {file} adds a program, so it needs `resume`, the \
+                     command that resumes it"
+                )));
+            }
+            let uses_state = definition.resume.contains(STATE_PLACEHOLDER);
+            if uses_state != (definition.state != StateKind::None) {
+                return Err(Error::new(if uses_state {
+                    format!(
+                        "`programs.{name}.resume` in {file} uses {STATE_PLACEHOLDER}, but the \
+                         program reports no state: set `state` to \"id\" or \"path\""
+                    )
+                } else {
+                    format!(
+                        "`programs.{name}.resume` in {file} must use {STATE_PLACEHOLDER} where \
+                         the program's reported state goes, since `state` isn't \"none\""
+                    )
+                }));
+            }
+            match builtin {
+                Some(i) if enabled => builtins[i] = definition,
+                Some(i) => {
+                    builtins.remove(i);
+                }
+                None if enabled => added.push(definition),
+                None => {}
+            }
+        }
+        added.append(&mut builtins);
+        Ok(Programs { definitions: added })
+    }
+
     /// Every definition's name.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.definitions.iter().map(|d| d.name.as_str())
@@ -286,11 +447,92 @@ mod tests {
             resume: "pi --session {state}".to_string(),
             requires_file: None,
             payload: None,
+            fallback: Fallback::Command,
         };
         assert_eq!(
             pi.resume_command(&dir.0, Some("/s/it's a.jsonl"))
                 .as_deref(),
             Some(r"pi --session '/s/it'\''s a.jsonl'")
         );
+    }
+
+    fn configured(toml: &str) -> Result<Programs> {
+        let table: toml::Table = toml.parse().unwrap();
+        Programs::configured(&table["programs"], Path::new("/c/config.toml"))
+    }
+
+    #[test]
+    fn an_override_changes_only_the_fields_it_sets() {
+        let programs =
+            configured("[programs.claude]\nresume = \"claude --resume {state} --yolo\"\n").unwrap();
+        let claude = programs.get("claude").unwrap();
+        assert_eq!(claude.resume, "claude --resume {state} --yolo");
+        assert_eq!(claude.state, StateKind::Id);
+        assert_eq!(claude.payload, Some(Payload::ClaudeCode));
+        assert_eq!(programs.get("nvim"), Programs::default().get("nvim"));
+    }
+
+    #[test]
+    fn a_new_programs_fields_default_and_it_comes_before_the_built_ins() {
+        let programs = configured(
+            "[programs.myvim]\nmatch = [\"nvim\"]\nresume = \"nvim -c Resume\"\n\
+             [programs.off]\nresume = \"off\"\nenabled = false\n",
+        )
+        .unwrap();
+        assert_eq!(
+            programs.names().collect::<Vec<_>>(),
+            ["myvim", "nvim", "claude"]
+        );
+        let myvim = programs.get("myvim").unwrap();
+        assert_eq!(myvim.state, StateKind::None);
+        assert_eq!(myvim.requires_file, None);
+        assert_eq!(myvim.fallback, Fallback::Command);
+    }
+
+    #[test]
+    fn an_empty_requires_file_removes_the_built_ins_and_fallback_can_be_none() {
+        let programs =
+            configured("[programs.nvim]\nrequires_file = \"\"\nfallback = \"none\"\n").unwrap();
+        let nvim = programs.get("nvim").unwrap();
+        assert_eq!(nvim.requires_file, None);
+        assert_eq!(nvim.fallback, Fallback::None);
+    }
+
+    #[test]
+    fn errors_name_the_file_the_table_and_the_field() {
+        for (toml, name) in [
+            ("[programs.nvim]\nresmue = \"x\"", "`programs.nvim.resmue`"),
+            ("[programs.nvim]\nmatch = []", "`programs.nvim.match`"),
+            ("[programs.nvim]\nmatch = \"nvim\"", "`programs.nvim.match`"),
+            (
+                "[programs.nvim]\nenabled = \"no\"",
+                "`programs.nvim.enabled`",
+            ),
+            (
+                "[programs.nvim]\nfallback = \"last\"",
+                "`programs.nvim.fallback`",
+            ),
+            (
+                "[programs.nvim]\nresume = \"a\\nb\"",
+                "`programs.nvim.resume`",
+            ),
+            (
+                "[programs.nvim]\nresume = \"nvim {state}\"",
+                "`programs.nvim.resume`",
+            ),
+            (
+                "[programs.claude]\nstate = \"none\"",
+                "`programs.claude.resume`",
+            ),
+            ("[programs.x]\nstate = \"id\"", "`programs.x`"),
+            ("programs = 3", "`programs`"),
+            ("[programs]\nx = 3", "`programs.x`"),
+        ] {
+            let error = configured(toml).expect_err(toml).to_string();
+            assert!(
+                error.contains(name) && error.contains("/c/config.toml"),
+                "{toml}: {error}"
+            );
+        }
     }
 }

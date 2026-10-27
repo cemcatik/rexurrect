@@ -18,3 +18,4 @@ Restore has never run anything: a block's last command is typed at its prompt, a
 - Opting in is a one-word change per program, and the config file (ADR-0007) means it takes effect at the next restore without reinstalling anything.
 - An auto-resumed program starts as auto-restore runs, possibly before the Rex app attaches. If programs that query the terminal's colours at startup pick the wrong theme without a client, #61 waits for one, as herdr does.
 - An auto-resumed command goes through the block's shell, so it's in the shell's history and the recorder records it as the block's last command.
+- A program definition can set `fallback = "none"` (#57): a listed program of its that can't resume then gets the block's last command typed, never run, as an unlisted one would. The rule above still holds for what runs: restore never runs a block's last command.
