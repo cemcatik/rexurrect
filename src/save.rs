@@ -57,7 +57,9 @@ pub fn run() -> Result<ExitCode> {
     // server instance, and on which host is local.
     let server = rex.server_status()?;
     let mut status = ExitCode::SUCCESS;
-    if let Some(report) = restore::restore_unrestored_instance(&rex, &state, &lock, &server)? {
+    if let Some(report) =
+        restore::restore_unrestored_instance(&rex, &state, &lock, &server, &config)?
+    {
         println!("restored first: this server instance hadn't been restored into yet");
         let mut out = std::io::stdout().lock();
         status = report.finish(&state, "save (restoring first)", &mut out);
@@ -125,6 +127,7 @@ fn save_snapshot(
         taken_at,
         starting,
         config.no_scrollback,
+        config.programs,
     )?;
     let mut live = Live::new();
     let mut sessions = Vec::new();

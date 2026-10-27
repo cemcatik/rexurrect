@@ -5,7 +5,7 @@
 
 use crate::error::Result;
 use crate::process;
-use crate::rex::api::TerminalProcess;
+use crate::rex::api::{ProcessInfo, TerminalProcess};
 
 /// rexurrect's own executable name. A save run from a block is that block's
 /// foreground program while it saves, and never what the block was doing.
@@ -19,11 +19,15 @@ const REXURRECT: &str = "rexurrect";
 /// method reports none.
 pub fn foreground_command(process: &TerminalProcess) -> Result<Option<String>> {
     match process.foreground_program() {
-        Some(program) if !program.names().any(|name| name == REXURRECT) => {
-            Ok(process::arguments(program.pid)?.and_then(|arguments| zsh_line(&arguments)))
-        }
+        Some(program) if !program.names().any(|name| name == REXURRECT) => command_line(program),
         _ => Ok(None),
     }
+}
+
+/// `program`'s command line, as restore would type it (see [`zsh_line`]),
+/// or `None` if its arguments can't be read or typed.
+pub fn command_line(program: &ProcessInfo) -> Result<Option<String>> {
+    Ok(process::arguments(program.pid)?.and_then(|arguments| zsh_line(&arguments)))
 }
 
 /// `arguments` as a line zsh runs as the same program with the same
@@ -68,7 +72,6 @@ fn is_plain(argument: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rex::api::ProcessInfo;
 
     fn line(arguments: &[&str]) -> Option<String> {
         zsh_line(&arguments.iter().map(|a| a.to_string()).collect::<Vec<_>>())

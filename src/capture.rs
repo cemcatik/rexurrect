@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::foreground;
 use crate::label;
 use crate::lineage::Lineage;
+use crate::programs::Programs;
 use crate::recorder::{Recorded, RecorderFiles};
 use crate::rex::api::{
     BlockView, LayerView, LayoutView, SHELL_FLAVOR, SessionView, TerminalProcess, WindowView,
@@ -17,7 +18,9 @@ use crate::rex::{BlockRef, Rex, RexError};
 use crate::scrollback::{
     NoScrollbackPrograms, SavedScrollback, ScrollbackSource, ScrollbackStore, SnapshotScrollback,
 };
-use crate::snapshot::{SavedBlock, SavedLayout, SavedSession, SavedSplit, SavedWindow};
+use crate::snapshot::{
+    SavedBlock, SavedLayout, SavedResume, SavedSession, SavedSplit, SavedWindow,
+};
 use crate::startup::Starting;
 use crate::state::StateDir;
 use crate::timestamp::Timestamp;
@@ -27,7 +30,8 @@ use crate::workdir;
 /// local server's host, the home directory), what it knows about them on
 /// this machine (the recorder files, the sessions and blocks in their
 /// startup window, the default last commands), the programs whose blocks
-/// get no scrollback, and where it saves scrollback.
+/// get no scrollback, the program definitions blocks resume by, and where it
+/// saves scrollback.
 pub struct CaptureContext {
     /// The local server's host. A block with a different `host_id` is a
     /// remote block.
@@ -46,6 +50,9 @@ pub struct CaptureContext {
     pub scrollback: SnapshotScrollback,
     /// The programs whose blocks get no scrollback.
     pub no_scrollback: NoScrollbackPrograms,
+    /// The program definitions: a block whose foreground program matches one
+    /// is saved as resumable.
+    pub programs: Programs,
 }
 
 impl CaptureContext {
@@ -57,6 +64,7 @@ impl CaptureContext {
         taken_at: Timestamp,
         starting: Starting,
         no_scrollback: NoScrollbackPrograms,
+        programs: Programs,
     ) -> Result<CaptureContext> {
         Ok(CaptureContext {
             host_id: host_id.to_string(),
@@ -66,6 +74,7 @@ impl CaptureContext {
             defaults: DefaultCommands::load(state)?,
             scrollback: ScrollbackStore::new(state).for_snapshot(taken_at),
             no_scrollback,
+            programs,
         })
     }
 
@@ -89,6 +98,7 @@ impl CaptureContext {
             working_directory: self.home.clone(),
             last_command: None,
             scrollback: None,
+            resume: None,
         }
     }
 }
@@ -288,7 +298,9 @@ impl Capture<'_> {
     /// recorder has recorded nothing for is saved as restore created it. A
     /// block that isn't a shell block has no working directory, and a remote
     /// block's is on another host, so either is saved as a plain shell in
-    /// the home directory.
+    /// the home directory. A block's resumable program is saved beside its
+    /// last command (see [`Capture::resume`]); one in its startup window
+    /// keeps the one restore created it with.
     fn saved_block(&mut self, block: &BlockView) -> Result<SavedBlock> {
         if !self.context.is_local_shell(block) {
             return Ok(self.plain_shell());
@@ -315,6 +327,7 @@ impl Capture<'_> {
                 working_directory: created.working_directory.clone(),
                 last_command: created.last_command.clone(),
                 scrollback: None,
+                resume: created.resume.clone(),
             });
         }
         let process = rex.terminal_process(session_id, block_id)?;
@@ -323,6 +336,7 @@ impl Capture<'_> {
             working_directory: workdir::working_directory(rex, session_id, block_id, &process)?,
             last_command: self.last_command(block_id, recorded, &process)?,
             scrollback: None,
+            resume: self.resume(&process)?,
         };
         let has_scrollback = !self.context.no_scrollback.running_in(&process);
         self.scrollback.push(has_scrollback.then(|| {
@@ -362,6 +376,23 @@ impl Capture<'_> {
                 None => self.context.defaults.get(block_id).map(str::to_string),
             },
         })
+    }
+
+    /// The block's resumable program: the one in its foreground, if it
+    /// matches a program definition, whatever its last command. A program
+    /// that had exited by now doesn't resume, even if it's still the block's
+    /// last command.
+    fn resume(&self, process: &TerminalProcess) -> Result<Option<SavedResume>> {
+        let (Some(definition), Some(program)) = (
+            self.context.programs.matching(process),
+            process.foreground_program(),
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some(SavedResume {
+            program: definition.name.clone(),
+            command_line: foreground::command_line(program)?,
+        }))
     }
 
     /// [`CaptureContext::plain_shell`]: no scrollback.

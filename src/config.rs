@@ -29,6 +29,7 @@ use std::time::Duration;
 
 use crate::error::{Context, Error, Result};
 use crate::log;
+use crate::programs::Programs;
 use crate::retention::Retention;
 use crate::scrollback::NoScrollbackPrograms;
 use crate::settings;
@@ -51,6 +52,8 @@ pub struct Config {
     /// `app_session_watch`: how long auto-restore looks for the app session
     /// after restoring (30 seconds).
     pub app_session_watch: Duration,
+    /// The program definitions blocks resume by: the built-in ones.
+    pub programs: Programs,
 }
 
 impl Default for Config {
@@ -60,6 +63,7 @@ impl Default for Config {
             no_scrollback: NoScrollbackPrograms::new(vec!["claude".to_string()]),
             ready_timeout: Duration::from_secs(60),
             app_session_watch: Duration::from_secs(30),
+            programs: Programs::default(),
         }
     }
 }

@@ -161,7 +161,7 @@ pub struct SavedBlock {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub working_directory: PathBuf,
-    /// The block's recorder file, as found: it may not be typeable (see
+    /// The block's last command, as found: it may not be typeable (see
     /// `create::typed_command`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_command: Option<String>,
@@ -170,4 +170,50 @@ pub struct SavedBlock {
     /// full-screen program, or had nothing to save.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scrollback: Option<PathBuf>,
+    /// The program in the block's foreground at the save, if it matched a
+    /// program definition: restore resumes it if it can (see `resume`).
+    /// Absent from snapshots taken before rexurrect resumed programs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<SavedResume>,
+}
+
+/// A block's resumable program, as save found it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedResume {
+    /// The name of the program definition it matched. The definition itself
+    /// is read at restore, so a change to it applies to existing snapshots.
+    pub program: String,
+    /// The program's own command line, as the foreground fallback reads it
+    /// (see `foreground`); absent if it couldn't be read or typed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_line: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Snapshots taken before rexurrect resumed programs restore as before.
+    #[test]
+    fn a_block_saved_before_resuming_existed_has_nothing_to_resume() {
+        let block: SavedBlock = serde_json::from_value(json!({
+            "working_directory": "/w/a",
+            "last_command": "nvim init.lua",
+        }))
+        .unwrap();
+        assert_eq!(block.resume, None);
+    }
+
+    #[test]
+    fn a_resumable_block_records_its_program_and_command_line() {
+        let block: SavedBlock = serde_json::from_value(json!({
+            "working_directory": "/w/a",
+            "resume": { "program": "nvim", "command_line": "nvim init.lua" },
+        }))
+        .unwrap();
+        let resume = block.resume.unwrap();
+        assert_eq!(resume.program, "nvim");
+        assert_eq!(resume.command_line.as_deref(), Some("nvim init.lua"));
+    }
 }

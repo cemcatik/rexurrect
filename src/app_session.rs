@@ -26,7 +26,6 @@ use crate::process;
 use crate::rex::api::{ServerStatus, SessionSummary};
 use crate::rex::{Rex, RexError};
 use crate::save;
-use crate::scrollback::NoScrollbackPrograms;
 use crate::startup::StartingSessions;
 use crate::state::StateDir;
 use crate::timestamp::Timestamp;
@@ -79,9 +78,7 @@ pub fn close_app_session(
             Err(RexError::NotRunning { .. }) => return Watched::ServerStopped,
             Err(_) => {}
             Ok(live) => {
-                if let Ok(Some(found)) =
-                    find_app_session(rex, state, server, &config.no_scrollback, &live)
-                {
+                if let Ok(Some(found)) = find_app_session(rex, state, server, config, &live) {
                     return match rex.destroy_session(&found.session_id) {
                         Ok(()) => Watched::Closed(found),
                         Err(e) => Watched::CloseFailed(found, e),
@@ -104,7 +101,7 @@ fn find_app_session(
     rex: &Rex,
     state: &StateDir,
     server: &ServerStatus,
-    no_scrollback: &NoScrollbackPrograms,
+    config: &Config,
     live: &[SessionSummary],
 ) -> Result<Option<AppSession>> {
     // Read at every look: a restore run by hand meanwhile records the
@@ -118,7 +115,8 @@ fn find_app_session(
         &server.host_id,
         taken_at,
         StartingSessions::load(state)?.at(taken_at),
-        no_scrollback.clone(),
+        config.no_scrollback.clone(),
+        config.programs.clone(),
     )?;
     for summary in live {
         if lineages.is_restored_session(&summary.session_id) {

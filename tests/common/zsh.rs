@@ -23,8 +23,13 @@ pub fn quote(path: &Path) -> String {
 /// - a plain prompt (`<dir> %`), so captures are predictable;
 /// - an OSC 7 report before each prompt, so the terminal `pwd` method
 ///   answers about 0.2 s after a block starts. Rex doesn't inject shell
-///   integration itself: without this, `pwd` stays `{}` forever.
+///   integration itself: without this, `pwd` stays `{}` forever;
+/// - the test's `bin` directory, next to `ZDOTDIR`, first on `PATH`, so a
+///   stand-in `nvim` or `claude` ([`super::stand_in_bin`]) shadows a real
+///   one. Set here, because macOS's `/etc/zprofile` reorders `PATH` before
+///   `.zshrc` runs.
 const BASE_ZSHRC: &str = r#"# rexurrect test harness: minimal zsh for fixture blocks.
+path=(${ZDOTDIR:h}/bin $path)
 unset HISTFILE
 SAVEHIST=0
 PROMPT='%~ %# '

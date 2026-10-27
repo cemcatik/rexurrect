@@ -12,6 +12,7 @@ use crate::error::{Context, Error, Result};
 use crate::instance::RestoreLock;
 use crate::lineage::{Lineage, LineageMap};
 use crate::log;
+use crate::resume::Resuming;
 use crate::rex::Rex;
 use crate::rex::api::{CreatedSession, ServerStatus};
 use crate::scrollback::Replay;
@@ -173,14 +174,12 @@ impl RestoreReport {
 }
 
 pub fn run(options: &RestoreOptions) -> Result<ExitCode> {
-    // No setting changes restore yet, but a config file it can't use fails
-    // it all the same, as it fails every other run that reads it.
-    Config::load()?;
+    let config = Config::load()?;
     let state = StateDir::from_env()?;
     let lock = RestoreLock::acquire(&state)?;
     let rex = Rex::from_env()?;
     let server = rex.server_status()?;
-    let report = restore(&rex, &state, &lock, &server, options)?;
+    let report = restore(&rex, &state, &lock, &server, &config, options)?;
     Ok(report.finish(&state, "restore", &mut std::io::stdout().lock()))
 }
 
@@ -193,11 +192,12 @@ pub fn restore_unrestored_instance(
     state: &StateDir,
     lock: &RestoreLock,
     server: &ServerStatus,
+    config: &Config,
 ) -> Result<Option<RestoreReport>> {
     if lock.is_restored(&server.instance_id)? {
         return Ok(None);
     }
-    restore(rex, state, lock, server, &RestoreOptions::default()).map(Some)
+    restore(rex, state, lock, server, config, &RestoreOptions::default()).map(Some)
 }
 
 /// Restores a snapshot and, once that has finished, records the server
@@ -209,9 +209,10 @@ pub fn restore(
     state: &StateDir,
     lock: &RestoreLock,
     server: &ServerStatus,
+    config: &Config,
     options: &RestoreOptions,
 ) -> Result<RestoreReport> {
-    let report = restore_sessions(rex, state, options)?;
+    let report = restore_sessions(rex, state, config, options)?;
     if options.restores_whole_snapshot() && !report.every_attempt_failed() {
         lock.record_restored(&server.instance_id)?;
     }
@@ -220,14 +221,16 @@ pub fn restore(
 
 /// Creates each saved session whose lineage has no live session (ADR-0001)
 /// and records the new session's lineage, what it was created with for
-/// saves in its startup window (see `startup`), and its blocks' default
-/// last commands for saves after that (see `defaults`); a dry run only
+/// saves in its startup window (see `startup`), and what it typed at its
+/// blocks' prompts (see `resume`) as their default last commands for saves
+/// after that (see `defaults`); a dry run only
 /// reports what it would create. A session that fails, to create or to have
 /// its blocks told apart, doesn't stop the others; errors that stop the
 /// whole restore (no server, unreadable or unwritable state) are returned.
 fn restore_sessions(
     rex: &Rex,
     state: &StateDir,
+    config: &Config,
     options: &RestoreOptions,
 ) -> Result<RestoreReport> {
     let Some((snapshot_id, snapshot)) = chosen_snapshot(state, options)? else {
@@ -247,6 +250,7 @@ fn restore_sessions(
     starting.retain(Timestamp::now(), is_live);
     let mut defaults = DefaultCommands::load(state)?;
     let replay = Replay::new(state);
+    let resuming = Resuming::new(&config.programs);
 
     let mut report = RestoreReport {
         snapshot: Some(snapshot_id.clone()),
@@ -267,7 +271,9 @@ fn restore_sessions(
             continue;
         }
         let as_created = create::as_created(saved, &home, &replay);
-        let created = match rex.create_session(&create::create_request(&as_created, &replay)) {
+        let inputs: Vec<Option<String>> = as_created.blocks().map(|b| resuming.input(b)).collect();
+        let request = create::create_request(&as_created, &inputs, &replay);
+        let created = match rex.create_session(&request) {
             Ok(created) => created,
             Err(e) => {
                 report.outcomes.push(Outcome::Failed {
@@ -301,8 +307,8 @@ fn restore_sessions(
         };
         if let Ok(block_ids) = &block_ids {
             let mut changed = false;
-            for (block_id, block) in block_ids.iter().zip(as_created.blocks()) {
-                if let Some(command) = &block.last_command {
+            for (block_id, input) in block_ids.iter().zip(&inputs) {
+                if let Some(command) = input {
                     changed |= defaults.set(block_id, command);
                 }
             }

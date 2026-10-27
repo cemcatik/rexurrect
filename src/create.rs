@@ -15,6 +15,10 @@ use crate::snapshot::{SavedBlock, SavedLayout, SavedSession, SavedWindow};
 /// ([`typed_command`]), and its scrollback printed above that prompt if
 /// `replay` can print it. Rex would quietly start the shell in its own home
 /// anyway, but rexurrect doesn't rely on that.
+///
+/// What restore types at each block's prompt is decided apart from this
+/// (see `resume`), so the session as created keeps what a later restore
+/// decides from: its blocks' last commands and resumable programs.
 pub fn as_created(saved: &SavedSession, home: &Path, replay: &Replay) -> SavedSession {
     let mut created = saved.clone();
     for block in created.blocks_mut() {
@@ -30,41 +34,58 @@ pub fn as_created(saved: &SavedSession, home: &Path, replay: &Replay) -> SavedSe
 }
 
 /// The request that creates `created`, a session [`as_created`] made.
-/// `replay` prints each block's scrollback above its new prompt.
-pub fn create_request(created: &SavedSession, replay: &Replay) -> CreateSession {
+/// `inputs` holds what to type at each block's prompt, in
+/// [`SavedSession::blocks`] order (see `resume`). `replay` prints each
+/// block's scrollback above its new prompt.
+pub fn create_request(
+    created: &SavedSession,
+    inputs: &[Option<String>],
+    replay: &Replay,
+) -> CreateSession {
+    let mut inputs = inputs.iter().cloned();
     CreateSession {
         label: created.label.clone(),
         initial_windows: created
             .windows
             .iter()
-            .map(|window| create_window(window, replay))
+            .map(|window| create_window(window, &mut inputs, replay))
             .collect(),
     }
 }
 
-fn create_window(window: &SavedWindow, replay: &Replay) -> CreateWindow {
+fn create_window(
+    window: &SavedWindow,
+    inputs: &mut impl Iterator<Item = Option<String>>,
+    replay: &Replay,
+) -> CreateWindow {
     CreateWindow {
         window_label: window.label.clone(),
-        layout: create_layout(&window.layout, replay),
+        layout: create_layout(&window.layout, inputs, replay),
     }
 }
 
-fn create_layout(layout: &SavedLayout, replay: &Replay) -> CreateLayout {
+fn create_layout(
+    layout: &SavedLayout,
+    inputs: &mut impl Iterator<Item = Option<String>>,
+    replay: &Replay,
+) -> CreateLayout {
     match layout {
-        SavedLayout::Block(block) => CreateLayout::Block(create_block(block, replay)),
+        SavedLayout::Block(block) => {
+            CreateLayout::Block(create_block(block, inputs.next().flatten(), replay))
+        }
         SavedLayout::Split(split) => CreateLayout::Split(CreateSplit {
             direction: split.direction,
             ratio: split.ratio,
-            before: Box::new(create_layout(&split.before, replay)),
-            after: Box::new(create_layout(&split.after, replay)),
+            before: Box::new(create_layout(&split.before, inputs, replay)),
+            after: Box::new(create_layout(&split.after, inputs, replay)),
         }),
     }
 }
 
-fn create_block(block: &SavedBlock, replay: &Replay) -> CreateBlock {
+fn create_block(block: &SavedBlock, input: Option<String>, replay: &Replay) -> CreateBlock {
     let mut options = TerminalOptions {
         cwd: Some(block.working_directory.clone()),
-        initial_input: block.last_command.clone(),
+        initial_input: input,
         ..TerminalOptions::default()
     };
     replay.apply(block, &mut options);
@@ -85,6 +106,11 @@ pub fn typed_command(block: &SavedBlock) -> Option<&str> {
     block
         .last_command
         .as_deref()
-        // Any control character, tab included: typed, a tab triggers completion.
-        .filter(|command| !command.is_empty() && !command.chars().any(char::is_control))
+        .filter(|command| is_typeable(command))
+}
+
+/// Whether restore can type `command` at a prompt: not empty, and no
+/// control character, tab included (typed, a tab triggers completion).
+pub fn is_typeable(command: &str) -> bool {
+    !command.is_empty() && !command.chars().any(char::is_control)
 }
