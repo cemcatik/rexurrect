@@ -297,7 +297,8 @@ not just started again: Neovim with its buffers, splits and tab pages, Claude Co
 conversation you were in. rexurrect knows how to
 resume a program through its **program definition**. At each save, a block whose foreground
 program matches a definition (by the name it was run by or its executable's name, as
-`no_scrollback` matches) is saved as resumable. At restore, the definition builds the program's
+`no_scrollback` matches, or, for a program an interpreter runs, such as an npm-installed agent
+that runs as `node`, by its script's file name) is saved as resumable. At restore, the definition builds the program's
 resume command, which is typed at the block's prompt in place of its last command, and **never
 run**: press Enter to resume. Programs you list in `auto_resume` come back running instead (see
 [Auto-resume](#auto-resume)).
@@ -321,6 +322,8 @@ Built in:
 | --- | --- | --- |
 | Neovim (`nvim`) | `nvim -S` | a `Session.vim` is in the block's working directory |
 | Claude Code (`claude`) | `claude --resume <conversation ID>` | its hook has reported the conversation |
+| Codex (`codex`) | `codex resume <thread ID>` | its hook has reported the thread |
+| pi (`pi`) | `pi --session <session file>` | its extension has reported the session |
 
 Some programs need to tell rexurrect something for it to resume them: an agent its conversation's
 ID, say. That's the program's **resume state**, and the program reports it with
@@ -408,6 +411,63 @@ conversation>` typed. The command drops any flags `claude` was started with. A b
 its last command. If two blocks were in one conversation, only the first, in layout order, gets
 the resume command, so two Claude Codes never write to one conversation.
 
+A resumed agent reopens its conversation and waits at its prompt. It doesn't carry on by
+itself: a reply it was in the middle of when the server stopped is gone, so ask it to continue.
+
+### Codex
+
+Codex reports its thread from a `SessionStart` hook, which, as Claude Code's, runs whenever a
+thread starts, resumes, or is cleared, compacted or forked. A Codex started from inside another
+Codex (by its agent, say) doesn't change the block: it inherits the outer one's
+`CODEX_THREAD_ID`, and its reports for any other thread are ignored, as herdr does. Print the
+hook and the line that turns Codex's hooks on:
+
+```sh
+rexurrect report codex --print-hook
+```
+
+```
+# In ~/.codex/hooks.json:
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "REXURRECT_STATE_DIR=/Users/you/.local/state/rexurrect REXURRECT_CONFIG=/Users/you/.config/rexurrect/config.toml /Users/you/.cargo/bin/rexurrect report codex",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+# In ~/.codex/config.toml:
+[features]
+hooks = true
+```
+
+Add the `SessionStart` entry to `hooks.json` beside any hooks it has, and `hooks = true` to the
+`[features]` table of `config.toml` (in `$CODEX_HOME` instead of `~/.codex`, if you set it).
+From then on, a block that was running `codex` comes back with `codex resume <its thread>`
+typed. Codex installed with npm runs as `node`, and is matched by its script's name, `codex`.
+
+### pi
+
+pi reports its session file from an extension, which runs whenever a session starts: when pi
+starts, and after `/new`, `/resume` and `/fork`. Only in pi's interactive mode: `pi -p` and its
+other modes never change the block. Print the extension straight into pi's extensions
+directory:
+
+```sh
+rexurrect report pi --print-hook > ~/.pi/agent/extensions/rexurrect.ts
+```
+
+(`$PI_CODING_AGENT_DIR/extensions/` instead, if you set it.) It names rexurrect by its full path
+and pins the state directory and config file, so print it again if you move any of them. From
+then on, a block that was running `pi` comes back with `pi --session <its session file>` typed.
+
 ### Auto-resume
 
 By default, restore never runs anything: every resume command is typed for you to run. Programs
@@ -448,14 +508,14 @@ definition's fields:
 
 | Field | What it is | For a new program |
 | --- | --- | --- |
-| `match` | The program names it matches: the name it was run by or its executable's | `[<name>]` |
+| `match` | The program names it matches: the name it was run by, its executable's, or, for an interpreter (`node`, `bun`, `python`, `python3`, `ruby`, `perl`), its script's file name | `[<name>]` |
 | `state` | The resume state the program reports: `"none"`, `"id"` or `"path"` (absolute) | `"none"` |
 | `resume` | The resume command; `{state}` stands for the reported value, quoted where zsh needs it | required |
 | `requires_file` | A file that must be in the block's working directory for it to resume | none |
 | `fallback` | What an auto-resumed program that can't resume runs: `"command"`, its own command line, or `"none"`, its last command typed | `"command"` |
 | `enabled` | `false` turns the definition off | `true` |
 
-A table named like a built-in (`nvim`, `claude`) overrides it field by field: the fields you set
+A table named like a built-in (`nvim`, `claude`, `codex`, `pi`) overrides it field by field: the fields you set
 replace the built-in's, and the rest keep the built-in's. `requires_file = ""` removes the
 built-in's requirement, and `enabled = false` turns it off, so its blocks come back with their
 last command. `resume` uses `{state}` exactly when `state` isn't `"none"`. Each definition's

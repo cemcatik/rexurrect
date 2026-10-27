@@ -10,7 +10,13 @@
 //! - Neovim, which reports no state and resumes from vim-obsession's
 //!   `Session.vim`, as tmux-resurrect's `session` strategy does;
 //! - Claude Code, which reports its agent conversation's ID from a
-//!   `SessionStart` hook (see `report`).
+//!   `SessionStart` hook (see `report`);
+//! - Codex, which reports its thread's ID from a `SessionStart` hook too;
+//! - pi, which reports its session file from an extension.
+//!
+//! A program goes by the names Rex gives its process and, when it's an
+//! interpreter's script (an npm-installed agent runs as `node`), by its
+//! script's file name (see [`Programs::matching`]).
 //!
 //! The config file's `[programs.<name>]` tables change a built-in field by
 //! field, turn one off (`enabled = false`), or add a program (see
@@ -28,6 +34,7 @@ use crate::config;
 use crate::create;
 use crate::error::{Error, Result};
 use crate::foreground;
+use crate::process;
 use crate::rex::api::TerminalProcess;
 
 /// What stands for the reported value in a resume command.
@@ -90,13 +97,20 @@ impl StateKind {
     }
 }
 
-/// How a built-in agent's hook passes its resume state: its payload, on
-/// `report`'s stdin (see `report`).
+/// How a built-in agent reports its resume state: what `report
+/// --print-hook` prints, and what the hook passes `report` (see `report`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Payload {
-    /// A Claude Code hook's JSON: the agent conversation's `session_id`,
-    /// unless the payload has an `agent_id` (a subagent's).
+pub enum Hook {
+    /// A Claude Code `SessionStart` hook, its JSON on stdin: the agent
+    /// conversation's `session_id`, unless the payload has an `agent_id` (a
+    /// subagent's).
     ClaudeCode,
+    /// A Codex `SessionStart` hook, its JSON on stdin: the thread's
+    /// `session_id`, unless a `CODEX_THREAD_ID` it inherited names another
+    /// (a Codex started from inside another's).
+    Codex,
+    /// A pi extension, which passes its session file as the value.
+    Pi,
 }
 
 /// What an auto-resumed program that can't resume comes back as.
@@ -124,8 +138,8 @@ pub struct ProgramDefinition {
     /// A file that must exist in the block's working directory at restore,
     /// else the program can't resume.
     pub requires_file: Option<String>,
-    /// What a built-in agent's hook passes `report` on stdin.
-    pub payload: Option<Payload>,
+    /// How a built-in agent reports its resume state.
+    pub hook: Option<Hook>,
     /// What the program comes back as when it auto-resumes but can't
     /// resume.
     pub fallback: Fallback,
@@ -172,7 +186,7 @@ impl Default for Programs {
                     state: StateKind::None,
                     resume: "nvim -S".to_string(),
                     requires_file: Some("Session.vim".to_string()),
-                    payload: None,
+                    hook: None,
                     fallback: Fallback::Command,
                 },
                 ProgramDefinition {
@@ -181,7 +195,25 @@ impl Default for Programs {
                     state: StateKind::Id,
                     resume: format!("claude --resume {STATE_PLACEHOLDER}"),
                     requires_file: None,
-                    payload: Some(Payload::ClaudeCode),
+                    hook: Some(Hook::ClaudeCode),
+                    fallback: Fallback::Command,
+                },
+                ProgramDefinition {
+                    name: "codex".to_string(),
+                    matches: vec!["codex".to_string()],
+                    state: StateKind::Id,
+                    resume: format!("codex resume {STATE_PLACEHOLDER}"),
+                    requires_file: None,
+                    hook: Some(Hook::Codex),
+                    fallback: Fallback::Command,
+                },
+                ProgramDefinition {
+                    name: "pi".to_string(),
+                    matches: vec!["pi".to_string()],
+                    state: StateKind::Path,
+                    resume: format!("pi --session {STATE_PLACEHOLDER}"),
+                    requires_file: None,
+                    hook: Some(Hook::Pi),
                     fallback: Fallback::Command,
                 },
             ],
@@ -237,7 +269,7 @@ impl Programs {
                     state: StateKind::None,
                     resume: String::new(),
                     requires_file: None,
-                    payload: None,
+                    hook: None,
                     fallback: Fallback::Command,
                 },
             };
@@ -339,16 +371,76 @@ impl Programs {
     }
 
     /// The definition matching the program in the foreground of the block
-    /// whose terminal `process` method answered `process`, by any name it
-    /// goes by, if there is one: the first that matches.
-    pub fn matching(&self, process: &TerminalProcess) -> Option<&ProgramDefinition> {
-        let program = process.foreground_program()?;
-        self.definitions.iter().find(|definition| {
-            program
-                .names()
+    /// whose terminal `process` method answered `process`, if there is one:
+    /// the first that matches any name it goes by (see
+    /// [`crate::rex::api::ProcessInfo::names`]) or, for an interpreter, the
+    /// file name of the script it runs, from its arguments as the kernel
+    /// holds them.
+    pub fn matching(&self, process: &TerminalProcess) -> Result<Option<&ProgramDefinition>> {
+        let Some(program) = process.foreground_program() else {
+            return Ok(None);
+        };
+        let arguments = match program.names().any(|name| INTERPRETERS.contains(&name)) {
+            true => process::arguments(program.pid)?,
+            false => None,
+        };
+        let names: Vec<&str> = program
+            .names()
+            .chain(arguments.as_deref().and_then(script_name))
+            .collect();
+        Ok(self.definitions.iter().find(|definition| {
+            names
+                .iter()
                 .any(|name| definition.matches.iter().any(|m| m == name))
-        })
+        }))
     }
+}
+
+/// The interpreters whose script, not the interpreter, is the program: an
+/// npm-installed agent's process is `node`, running the agent's script.
+const INTERPRETERS: &[&str] = &["node", "bun", "python", "python3", "ruby", "perl"];
+
+/// The interpreters' options that run code, or a module, in place of a
+/// script.
+const CODE_OPTIONS: &[&str] = &["-e", "--eval", "-p", "--print", "-c", "-m"];
+
+/// The interpreters' options whose value is the next argument, which
+/// mustn't be taken for the script (`node -r dotenv/config app.js`).
+const OPTIONS_WITH_VALUES: &[&str] = &[
+    "-r",
+    "--require",
+    "--import",
+    "--loader",
+    "--experimental-loader",
+    "-W",
+    "-X",
+];
+
+/// The file name of the script an interpreter runs, from its `arguments`,
+/// its own name first: `codex` for `node /opt/homebrew/bin/codex resume`.
+/// The script is the first argument that isn't an option or an option's
+/// value, or the one after `--`. `None` if it runs none: code given in its
+/// arguments (`node -e …`, `python3 -c …`) or a module (`python3 -m …`), or
+/// nothing at all (a REPL). The name is as it is: `node app.js` runs
+/// `app.js`, never `app`, as every other name matches exactly.
+fn script_name(arguments: &[String]) -> Option<&str> {
+    let mut rest = arguments.iter().skip(1);
+    let script = loop {
+        let argument = rest.next()?;
+        match argument.as_str() {
+            "--" => break rest.next()?,
+            option if CODE_OPTIONS.contains(&option) => return None,
+            option if option.starts_with("--eval=") || option.starts_with("--print=") => {
+                return None;
+            }
+            option if OPTIONS_WITH_VALUES.contains(&option) => {
+                rest.next();
+            }
+            option if option.starts_with('-') => {}
+            _ => break argument,
+        }
+    };
+    Path::new(script).file_name()?.to_str()
 }
 
 #[cfg(test)]
@@ -404,6 +496,69 @@ mod tests {
     }
 
     #[test]
+    fn codex_resumes_its_thread_by_id() {
+        let dir = Dir::new("codex");
+        assert_eq!(
+            builtin("codex")
+                .resume_command(&dir.0, Some("019a3c2b-1d4e-7f60-9a0f-3c2b1d4e5f60"))
+                .as_deref(),
+            Some("codex resume 019a3c2b-1d4e-7f60-9a0f-3c2b1d4e5f60")
+        );
+        assert_eq!(builtin("codex").resume_command(&dir.0, None), None);
+    }
+
+    #[test]
+    fn pi_resumes_its_session_file() {
+        let dir = Dir::new("pi");
+        assert_eq!(
+            builtin("pi")
+                .resume_command(&dir.0, Some("/u/.pi/agent/sessions/--w--/s.jsonl"))
+                .as_deref(),
+            Some("pi --session /u/.pi/agent/sessions/--w--/s.jsonl")
+        );
+        assert_eq!(builtin("pi").resume_command(&dir.0, Some("s.jsonl")), None);
+    }
+
+    fn script(arguments: &[&str]) -> Option<String> {
+        let arguments: Vec<String> = arguments.iter().map(|a| a.to_string()).collect();
+        script_name(&arguments).map(str::to_string)
+    }
+
+    /// An npm-installed program runs as its interpreter, with the path the
+    /// shell found it by as the script.
+    #[test]
+    fn an_interpreters_script_is_its_first_argument_that_isnt_an_option() {
+        assert_eq!(
+            script(&["node", "/opt/homebrew/bin/codex", "resume", "x"]).as_deref(),
+            Some("codex")
+        );
+        assert_eq!(
+            script(&["/usr/local/bin/node", "--no-warnings", "/u/bin/codex"]).as_deref(),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn an_options_value_isnt_the_script_and_the_argument_after_dash_dash_is() {
+        assert_eq!(
+            script(&["node", "-r", "dotenv/config", "/u/bin/codex"]).as_deref(),
+            Some("codex")
+        );
+        assert_eq!(script(&["node", "--", "/u/bin/pi"]).as_deref(), Some("pi"));
+        assert_eq!(script(&["node", "app.js"]).as_deref(), Some("app.js"));
+    }
+
+    #[test]
+    fn an_interpreter_running_code_from_its_arguments_or_nothing_runs_no_script() {
+        assert_eq!(script(&["node", "-e", "require('/u/bin/codex')"]), None);
+        assert_eq!(script(&["python3", "-c", "import codex"]), None);
+        assert_eq!(script(&["python3", "-m", "codex"]), None);
+        assert_eq!(script(&["node", "--eval=1", "/u/bin/codex"]), None);
+        assert_eq!(script(&["node"]), None);
+        assert_eq!(script(&[]), None);
+    }
+
+    #[test]
     fn an_id_is_letters_digits_and_a_few_marks_and_never_an_option() {
         for id in ["abc", "0b9e1f2a-61c4", "thread_1.2:3", "A"] {
             assert!(StateKind::Id.accepts(id), "{id}");
@@ -446,7 +601,7 @@ mod tests {
             state: StateKind::Path,
             resume: "pi --session {state}".to_string(),
             requires_file: None,
-            payload: None,
+            hook: None,
             fallback: Fallback::Command,
         };
         assert_eq!(
@@ -468,7 +623,7 @@ mod tests {
         let claude = programs.get("claude").unwrap();
         assert_eq!(claude.resume, "claude --resume {state} --yolo");
         assert_eq!(claude.state, StateKind::Id);
-        assert_eq!(claude.payload, Some(Payload::ClaudeCode));
+        assert_eq!(claude.hook, Some(Hook::ClaudeCode));
         assert_eq!(programs.get("nvim"), Programs::default().get("nvim"));
     }
 
@@ -481,7 +636,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             programs.names().collect::<Vec<_>>(),
-            ["myvim", "nvim", "claude"]
+            ["myvim", "nvim", "claude", "codex", "pi"]
         );
         let myvim = programs.get("myvim").unwrap();
         assert_eq!(myvim.state, StateKind::None);

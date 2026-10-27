@@ -397,7 +397,7 @@ impl Capture<'_> {
     /// by now doesn't resume, even if it's still the block's last command.
     fn resume(&self, block_id: &str, process: &TerminalProcess) -> Result<Option<SavedResume>> {
         let (Some(definition), Some(program)) = (
-            self.context.programs.matching(process),
+            self.context.programs.matching(process)?,
             process.foreground_program(),
         ) else {
             return Ok(None);
