@@ -73,7 +73,8 @@ to add (it never edits `~/.zshrc` or Rex's `init.lua`):
    `source` line naming the recorder Homebrew installed. Installed another way, `setup` points
    you to the next section instead.
 
-Running `setup` again is safe: it replaces the autosave agent and prints the same lines again.
+Running `setup` again is safe: it replaces the autosave job (the launchd agent, or on Linux the
+systemd timer) and prints the same lines again.
 
 ### The zsh recorder
 
@@ -738,9 +739,13 @@ each account's server started by Rex's login server (`rex-login-server.service`)
 from the Rex app on a Mac. The account's shell there is bash. Other distributions, init
 systems and setups will be added here as they're tried and reported.
 
-**Install** as above, with `cargo install`. Last commands come from the program running in each
-block (see [Usage](#usage)): the recorder is zsh-only, so a bash block's last command is the
-program that was in its foreground, not the last command typed at its prompt.
+**Install** as above, with `cargo install`, then [set up](#set-up) with `rexurrect setup`, which
+installs the systemd timer described [below](#autosave-on-linux). No Linux install puts the
+recorder beside the binary, so for a zsh account `setup` points you to
+[the zsh recorder](#the-zsh-recorder) instead of printing a `source` line. Last commands come
+from the program running in each block (see [Usage](#usage)): the recorder is zsh-only, so a
+bash block's last command is the program that was in its foreground, not the last command typed
+at its prompt.
 
 `save`, `restore` and auto-restore work as on macOS. With no `REX_SERVER` set (outside Rex,
 over SSH, say), rexurrect uses `rex`'s default endpoint, `$XDG_RUNTIME_DIR/rex/server.sock`,

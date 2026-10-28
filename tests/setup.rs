@@ -4,7 +4,8 @@
 //! recorder installed beside the binary, if there is one.
 //!
 //! Like the autosave tests, these install into a stand-in launchd
-//! ([`FakeLaunchd`]), never the real one, so they're macOS only too.
+//! ([`FakeLaunchd`]), never the real one, so they're macOS only too. Setup
+//! with the systemd timer has tests of its own, in `setup_systemd.rs`.
 
 #![cfg(target_os = "macos")]
 
@@ -34,15 +35,6 @@ fn setup_installs_the_same_agent_as_autosave_install() {
         .assert_success();
 
     assert_eq!(by_setup.the_agent().plist, by_install.the_agent().plist);
-}
-
-/// What `auto-restore --print-hook` prints in the same environment.
-fn printed_hook(env: &TestEnv) -> String {
-    env.rexurrect_at(NO_SERVER)
-        .args(["auto-restore", "--print-hook"])
-        .run()
-        .assert_success()
-        .stdout
 }
 
 #[test]
@@ -106,9 +98,6 @@ impl Prefix {
         self.share().join("rexurrect.plugin.zsh")
     }
 }
-
-/// Where the README says how to get and load the recorder.
-const RECORDER_DOCS: &str = "https://github.com/cemcatik/rexurrect#the-zsh-recorder";
 
 #[test]
 fn run_from_a_homebrew_prefix_setup_prints_the_line_that_sources_its_recorder() {

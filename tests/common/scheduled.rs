@@ -1,6 +1,7 @@
 //! What the autosave tests share across schedulers (launchd, systemd): an
 //! endpoint with no server, running an installed job the way its scheduler
-//! would, and the backing-out advice `autosave uninstall` prints.
+//! would, the backing-out advice `autosave uninstall` prints, and what
+//! `setup` prints after installing.
 
 use std::ffi::OsStr;
 use std::os::unix::fs::PermissionsExt;
@@ -76,4 +77,18 @@ pub fn assert_explains_backing_out(out: &RunOutput) {
     ] {
         assert!(out.stdout.contains(what), "no mention of {what}: {out}");
     }
+}
+
+/// Where the README says how to get and load the recorder, which `setup`
+/// points to when there's no recorder beside the binary.
+pub const RECORDER_DOCS: &str = "https://github.com/cemcatik/rexurrect#the-zsh-recorder";
+
+/// What `auto-restore --print-hook` prints in `env`, which `setup` prints
+/// too.
+pub fn printed_hook(env: &TestEnv) -> String {
+    env.rexurrect_at(NO_SERVER)
+        .args(["auto-restore", "--print-hook"])
+        .run()
+        .assert_success()
+        .stdout
 }
