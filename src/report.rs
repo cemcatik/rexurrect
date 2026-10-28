@@ -9,7 +9,7 @@
 //!
 //! The value is the argument after the program's name. Without one, a
 //! built-in agent's hook passes its own payload on stdin, and `report`
-//! takes what it needs from it (see [`Payload`]). Either way the value is
+//! takes what it needs from it (see [`Hook`]). Either way the value is
 //! dropped unless it's of the kind the program's definition expects (see
 //! [`StateKind::accepts`]).
 //!
@@ -26,7 +26,7 @@ use crate::config::{CONFIG_VAR, Config, ConfigFile};
 use crate::error::{Context, Error, Result};
 use crate::foreground;
 use crate::log::Log;
-use crate::programs::{Payload, StateKind};
+use crate::programs::{Hook, StateKind};
 use crate::resume_state::{Reported, ResumeStates};
 use crate::settings;
 use crate::state::{self, STATE_DIR_VAR, StateDir};
@@ -34,6 +34,10 @@ use crate::state::{self, STATE_DIR_VAR, StateDir};
 /// The variable Rex sets in each block's shell, and so in every program it
 /// runs: the block's ID.
 const BLOCK_VAR: &str = "REX_BLOCK";
+
+/// The variable Codex sets for the commands its agent runs: its thread's
+/// ID. A Codex started by one of them inherits it.
+const CODEX_THREAD_VAR: &str = "CODEX_THREAD_ID";
 
 /// The largest payload `report` reads from stdin. Hook payloads are a few
 /// hundred bytes.
@@ -115,16 +119,27 @@ fn store(
     if definition.state == StateKind::None {
         return because("this program reports no resume state");
     }
-    let value = match (&options.value, definition.payload) {
-        (Some(value), _) => value.clone(),
-        (None, Some(payload)) => match payload_value(payload, &read_stdin()?)? {
-            Some(value) => value,
-            None => return Err(Dropped::Quietly),
-        },
-        (None, None) => return because("no value was given"),
+    let value = match (&options.value, definition.hook) {
+        (Some(value), _) => Some(value.clone()),
+        (None, Some(Hook::ClaudeCode)) => claude_code_value(&read_stdin()?)?,
+        (None, Some(Hook::Codex)) => {
+            let inherited_thread = settings::env_non_empty(CODEX_THREAD_VAR);
+            codex_value(
+                &read_stdin()?,
+                inherited_thread.as_deref().and_then(|id| id.to_str()),
+            )?
+        }
+        (None, _) => return because("no value was given"),
+    };
+    let Some(value) = value else {
+        return Err(Dropped::Quietly);
     };
     if !definition.state.accepts(&value) {
-        return because(&format!("the value isn't {}", definition.state.described()));
+        return because(&format!(
+            "the value {} isn't {}",
+            shown(&value),
+            definition.state.described()
+        ));
     }
     let reported = Reported {
         program: definition.name.clone(),
@@ -132,6 +147,18 @@ fn store(
     };
     ResumeStates::new(state).write(block_id, &reported)?;
     Ok(())
+}
+
+/// The longest part of a value that `report` shows in the log.
+const MAX_SHOWN: usize = 100;
+
+/// `value` as the log shows it: quoted, with control characters escaped,
+/// and cut short past [`MAX_SHOWN`] characters.
+fn shown(value: &str) -> String {
+    match value.char_indices().nth(MAX_SHOWN) {
+        Some((end, _)) => format!("{:?}…", &value[..end]),
+        None => format!("{value:?}"),
+    }
 }
 
 /// Whether `id` can be a block ID Rex gave: what `REX_BLOCK` holds in a
@@ -161,31 +188,48 @@ fn read_stdin() -> std::result::Result<Vec<u8>, Dropped> {
     Ok(payload)
 }
 
-/// A Claude Code hook's payload, as far as `report` reads it.
+/// A Claude Code or Codex hook's payload, as far as `report` reads it.
 #[derive(Deserialize)]
-struct ClaudeCodePayload {
+struct HookPayload {
     session_id: Option<String>,
-    /// Set when a subagent runs the hook.
+    /// Set when a Claude Code subagent runs the hook.
     agent_id: Option<serde_json::Value>,
 }
 
-/// The value in a built-in agent's hook payload: `None` for a payload to
-/// ignore (a subagent's).
-fn payload_value(payload: Payload, bytes: &[u8]) -> std::result::Result<Option<String>, Dropped> {
-    match payload {
-        Payload::ClaudeCode => {
-            let payload: ClaudeCodePayload = serde_json::from_slice(bytes).map_err(|_| {
-                Dropped::Because("the hook's payload isn't a Claude Code hook's JSON".into())
-            })?;
-            if payload.agent_id.is_some_and(|id| !id.is_null()) {
-                return Ok(None);
-            }
-            payload
-                .session_id
-                .map(Some)
-                .ok_or_else(|| Dropped::Because("the hook's payload has no session_id".into()))
-        }
+impl HookPayload {
+    /// The payload in `bytes`, from `agent`'s hook ("a Claude Code"), if it
+    /// has a `session_id`.
+    fn read(bytes: &[u8], agent: &str) -> std::result::Result<(HookPayload, String), Dropped> {
+        let mut payload: HookPayload = serde_json::from_slice(bytes).map_err(|_| {
+            Dropped::Because(format!("the hook's payload isn't {agent} hook's JSON"))
+        })?;
+        let session_id = payload
+            .session_id
+            .take()
+            .ok_or_else(|| Dropped::Because("the hook's payload has no session_id".into()))?;
+        Ok((payload, session_id))
     }
+}
+
+/// The agent conversation in a Claude Code hook's payload: `None` for a
+/// subagent's, to ignore.
+fn claude_code_value(bytes: &[u8]) -> std::result::Result<Option<String>, Dropped> {
+    let (payload, session_id) = HookPayload::read(bytes, "a Claude Code")?;
+    let subagent = payload.agent_id.is_some_and(|id| !id.is_null());
+    Ok((!subagent).then_some(session_id))
+}
+
+/// The thread in a Codex hook's payload: `None`, to ignore, if
+/// `inherited_thread`, the hook's `CODEX_THREAD_ID`, names another, as
+/// herdr does: a Codex started from inside another's (by its shell tool)
+/// inherits that one's, and mustn't take over the block.
+fn codex_value(
+    bytes: &[u8],
+    inherited_thread: Option<&str>,
+) -> std::result::Result<Option<String>, Dropped> {
+    let (_, session_id) = HookPayload::read(bytes, "a Codex")?;
+    let nested = inherited_thread.is_some_and(|thread| thread != session_id);
+    Ok((!nested).then_some(session_id))
 }
 
 /// Logs `report`'s failures to `rexurrect.log`, each cause once: a hook
@@ -249,8 +293,9 @@ fn print_hook(options: &ReportOptions) -> Result<ExitCode> {
         .get(program)
         .ok_or_else(|| Error::new(format!("no program definition is named {program:?}")))?;
     let command = report_command(program)?;
-    match definition.payload {
-        Some(Payload::ClaudeCode) => print!("{}", claude_code_hook(&command)),
+    match definition.hook {
+        Some(Hook::ClaudeCode) => print!("{}", session_start_hook(&command)),
+        Some(Hook::Codex) => print!("{}", codex_hook(&command)),
         None if definition.state == StateKind::None => {
             return Err(Error::new(format!(
                 "{program} reports no resume state, so it needs no hook"
@@ -285,11 +330,23 @@ fn shell_word(path: &Path) -> Result<String> {
     Ok(foreground::quoted(path))
 }
 
-/// The `SessionStart` hook for `~/.claude/settings.json`, running
-/// `command`. `SessionStart` fires on `startup`, `resume`, `clear`,
-/// `compact` and `fork`; with no matcher, the hook runs on each, so the
-/// block always holds the conversation on screen.
-fn claude_code_hook(command: &str) -> String {
+/// The hooks for Codex: its `SessionStart` hook for `~/.codex/hooks.json`,
+/// which has the shape of Claude Code's, and the feature flag in
+/// `~/.codex/config.toml` that turns hooks on. Codex's `SessionStart` fires
+/// on `startup`, `resume`, `clear`, `compact` and `fork`, as Claude Code's
+/// does.
+fn codex_hook(command: &str) -> String {
+    format!(
+        "# In ~/.codex/hooks.json:\n{}\n# In ~/.codex/config.toml:\n[features]\nhooks = true\n",
+        session_start_hook(command)
+    )
+}
+
+/// The `SessionStart` hook for `~/.claude/settings.json` (and Codex's
+/// `hooks.json`), running `command`. `SessionStart` fires on `startup`,
+/// `resume`, `clear`, `compact` and `fork`; with no matcher, the hook runs
+/// on each, so the block always holds the conversation on screen.
+fn session_start_hook(command: &str) -> String {
     let hook = serde_json::json!({
         "hooks": {
             "SessionStart": [
@@ -308,6 +365,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_value_is_shown_quoted_escaped_and_cut_short() {
+        assert_eq!(shown("a b"), r#""a b""#);
+        assert_eq!(shown("a\nb"), r#""a\nb""#);
+        let long = "é".repeat(MAX_SHOWN + 1);
+        assert_eq!(shown(&long), format!("{:?}…", "é".repeat(MAX_SHOWN)));
+    }
+
+    #[test]
     fn a_block_id_is_rexs_and_nothing_that_reaches_elsewhere() {
         assert!(is_block_id("block:0b9e1f2a-61c4-4d1e-9a0f-3c2b1d4e5f60"));
         for id in ["", ".", "..", "../x", "a/b", ".hidden", "block:x y", "a\0b"] {
@@ -316,13 +381,44 @@ mod tests {
         assert!(!is_block_id(&"b".repeat(MAX_BLOCK_ID_LEN + 1)));
     }
 
-    fn claude(payload: &str) -> Option<String> {
-        payload_value(Payload::ClaudeCode, payload.as_bytes()).unwrap_or_else(|dropped| {
-            match dropped {
-                Dropped::Quietly => None,
-                Dropped::Because(cause) => Some(format!("dropped: {cause}")),
-            }
+    fn outcome(value: std::result::Result<Option<String>, Dropped>) -> Option<String> {
+        value.unwrap_or_else(|dropped| match dropped {
+            Dropped::Quietly => None,
+            Dropped::Because(cause) => Some(format!("dropped: {cause}")),
         })
+    }
+
+    fn claude(payload: &str) -> Option<String> {
+        outcome(claude_code_value(payload.as_bytes()))
+    }
+
+    fn codex(payload: &str, inherited_thread: Option<&str>) -> Option<String> {
+        outcome(codex_value(payload.as_bytes(), inherited_thread))
+    }
+
+    /// As Codex 0.165 sends it.
+    const CODEX_SESSION_START: &str = r#"{"session_id":"019a3c2b-1d4e","transcript_path":null,"cwd":"/w/a","hook_event_name":"SessionStart","model":"gpt-5.5","permission_mode":"default","source":"startup"}"#;
+
+    #[test]
+    fn a_codex_payload_reports_its_session_id() {
+        assert_eq!(
+            codex(CODEX_SESSION_START, None).as_deref(),
+            Some("019a3c2b-1d4e")
+        );
+        assert_eq!(
+            codex(CODEX_SESSION_START, Some("019a3c2b-1d4e")).as_deref(),
+            Some("019a3c2b-1d4e")
+        );
+    }
+
+    #[test]
+    fn a_codex_payload_for_another_thread_than_the_inherited_one_is_ignored() {
+        assert_eq!(codex(CODEX_SESSION_START, Some("019-outer")), None);
+    }
+
+    #[test]
+    fn a_codex_payload_without_a_session_id_is_dropped() {
+        assert!(codex("{}", None).unwrap().starts_with("dropped:"));
     }
 
     #[test]

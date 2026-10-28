@@ -10,7 +10,12 @@
 //! - Neovim, which reports no state and resumes from vim-obsession's
 //!   `Session.vim`, as tmux-resurrect's `session` strategy does;
 //! - Claude Code, which reports its agent conversation's ID from a
-//!   `SessionStart` hook (see `report`).
+//!   `SessionStart` hook (see `report`);
+//! - Codex, which reports its thread's ID from a `SessionStart` hook too.
+//!
+//! A program goes by the names Rex gives its process and, when it's an
+//! interpreter's script (an npm-installed agent runs as `node`), by its
+//! script's file name (see [`foreground::program_names`]).
 //!
 //! The config file's `[programs.<name>]` tables change a built-in field by
 //! field, turn one off (`enabled = false`), or add a program (see
@@ -90,13 +95,18 @@ impl StateKind {
     }
 }
 
-/// How a built-in agent's hook passes its resume state: its payload, on
-/// `report`'s stdin (see `report`).
+/// How a built-in agent reports its resume state: what `report
+/// --print-hook` prints, and what the hook passes `report` (see `report`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Payload {
-    /// A Claude Code hook's JSON: the agent conversation's `session_id`,
-    /// unless the payload has an `agent_id` (a subagent's).
+pub enum Hook {
+    /// A Claude Code `SessionStart` hook, its JSON on stdin: the agent
+    /// conversation's `session_id`, unless the payload has an `agent_id` (a
+    /// subagent's).
     ClaudeCode,
+    /// A Codex `SessionStart` hook, its JSON on stdin: the thread's
+    /// `session_id`, unless a `CODEX_THREAD_ID` it inherited names another
+    /// (a Codex started from inside another's).
+    Codex,
 }
 
 /// What an auto-resumed program that can't resume comes back as.
@@ -124,8 +134,8 @@ pub struct ProgramDefinition {
     /// A file that must exist in the block's working directory at restore,
     /// else the program can't resume.
     pub requires_file: Option<String>,
-    /// What a built-in agent's hook passes `report` on stdin.
-    pub payload: Option<Payload>,
+    /// How a built-in agent reports its resume state.
+    pub hook: Option<Hook>,
     /// What the program comes back as when it auto-resumes but can't
     /// resume.
     pub fallback: Fallback,
@@ -172,7 +182,7 @@ impl Default for Programs {
                     state: StateKind::None,
                     resume: "nvim -S".to_string(),
                     requires_file: Some("Session.vim".to_string()),
-                    payload: None,
+                    hook: None,
                     fallback: Fallback::Command,
                 },
                 ProgramDefinition {
@@ -181,7 +191,16 @@ impl Default for Programs {
                     state: StateKind::Id,
                     resume: format!("claude --resume {STATE_PLACEHOLDER}"),
                     requires_file: None,
-                    payload: Some(Payload::ClaudeCode),
+                    hook: Some(Hook::ClaudeCode),
+                    fallback: Fallback::Command,
+                },
+                ProgramDefinition {
+                    name: "codex".to_string(),
+                    matches: vec!["codex".to_string()],
+                    state: StateKind::Id,
+                    resume: format!("codex resume {STATE_PLACEHOLDER}"),
+                    requires_file: None,
+                    hook: Some(Hook::Codex),
                     fallback: Fallback::Command,
                 },
             ],
@@ -237,7 +256,7 @@ impl Programs {
                     state: StateKind::None,
                     resume: String::new(),
                     requires_file: None,
-                    payload: None,
+                    hook: None,
                     fallback: Fallback::Command,
                 },
             };
@@ -339,15 +358,19 @@ impl Programs {
     }
 
     /// The definition matching the program in the foreground of the block
-    /// whose terminal `process` method answered `process`, by any name it
-    /// goes by, if there is one: the first that matches.
-    pub fn matching(&self, process: &TerminalProcess) -> Option<&ProgramDefinition> {
-        let program = process.foreground_program()?;
-        self.definitions.iter().find(|definition| {
-            program
-                .names()
+    /// whose terminal `process` method answered `process`, if there is one:
+    /// the first that matches any name it goes by, its script's included
+    /// (see [`foreground::program_names`]).
+    pub fn matching(&self, process: &TerminalProcess) -> Result<Option<&ProgramDefinition>> {
+        let Some(program) = process.foreground_program() else {
+            return Ok(None);
+        };
+        let names = foreground::program_names(program)?;
+        Ok(self.definitions.iter().find(|definition| {
+            names
+                .iter()
                 .any(|name| definition.matches.iter().any(|m| m == name))
-        })
+        }))
     }
 }
 
@@ -404,6 +427,18 @@ mod tests {
     }
 
     #[test]
+    fn codex_resumes_its_thread_by_id() {
+        let dir = Dir::new("codex");
+        assert_eq!(
+            builtin("codex")
+                .resume_command(&dir.0, Some("019a3c2b-1d4e-7f60-9a0f-3c2b1d4e5f60"))
+                .as_deref(),
+            Some("codex resume 019a3c2b-1d4e-7f60-9a0f-3c2b1d4e5f60")
+        );
+        assert_eq!(builtin("codex").resume_command(&dir.0, None), None);
+    }
+
+    #[test]
     fn an_id_is_letters_digits_and_a_few_marks_and_never_an_option() {
         for id in ["abc", "0b9e1f2a-61c4", "thread_1.2:3", "A"] {
             assert!(StateKind::Id.accepts(id), "{id}");
@@ -446,7 +481,7 @@ mod tests {
             state: StateKind::Path,
             resume: "pi --session {state}".to_string(),
             requires_file: None,
-            payload: None,
+            hook: None,
             fallback: Fallback::Command,
         };
         assert_eq!(
@@ -468,7 +503,7 @@ mod tests {
         let claude = programs.get("claude").unwrap();
         assert_eq!(claude.resume, "claude --resume {state} --yolo");
         assert_eq!(claude.state, StateKind::Id);
-        assert_eq!(claude.payload, Some(Payload::ClaudeCode));
+        assert_eq!(claude.hook, Some(Hook::ClaudeCode));
         assert_eq!(programs.get("nvim"), Programs::default().get("nvim"));
     }
 
@@ -481,7 +516,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             programs.names().collect::<Vec<_>>(),
-            ["myvim", "nvim", "claude"]
+            ["myvim", "nvim", "claude", "codex"]
         );
         let myvim = programs.get("myvim").unwrap();
         assert_eq!(myvim.state, StateKind::None);

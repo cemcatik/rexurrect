@@ -131,17 +131,6 @@ fn session_start(session_id: &str, source: &str) -> String {
     .to_string()
 }
 
-/// Runs `rexurrect report` with `args` in the block `block_id` (its
-/// `REX_BLOCK`), fed `stdin`, as a hook in it would.
-fn report(env: &TestEnv, server: &Server, block_id: &str, args: &[&str], stdin: &str) -> RunOutput {
-    env.rexurrect(server)
-        .env("REX_BLOCK", block_id)
-        .arg("report")
-        .args(args)
-        .stdin(stdin)
-        .run()
-}
-
 const CONVERSATION: &str = "0b9e1f2a-61c4-4d1e-9a0f-3c2b1d4e5f60";
 
 #[test]
