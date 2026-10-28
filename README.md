@@ -955,7 +955,8 @@ To try autosave on the real launchd or systemd without touching your own job, al
 `REXURRECT_AUTOSAVE_LABEL` to a scratch label (for both `install` and `uninstall`); with
 systemd it names the units.
 
-Code for Linux only (reading `/proc`) isn't compiled on macOS. To type-check it there:
+Code for Linux only (reading `/proc`) isn't compiled on macOS, so CI also runs clippy, the unit
+tests and the integration tests' compile on Linux. To type-check it on macOS:
 
 ```sh
 rustup target add x86_64-unknown-linux-musl
