@@ -85,7 +85,7 @@ pub fn run(options: &AutoRestoreOptions) -> Result<ExitCode> {
 /// one they edit. `env` adds the state directory and the config file to the
 /// server's environment. The file's path, not its settings: an edit takes
 /// effect at the next server start.
-fn hook() -> Result<String> {
+pub fn hook() -> Result<String> {
     let program = std::env::current_exe().with_context(|| "finding rexurrect's own path")?;
     let state = StateDir::from_env()?;
     let config = ConfigFile::from_env()?;

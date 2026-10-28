@@ -16,22 +16,89 @@ needs nothing else at runtime.
 
 ## Install
 
-With a [Rust toolchain](https://rustup.rs) installed:
+Prebuilt binaries are for macOS, on Apple Silicon and Intel, and for Linux, on x86-64 and ARM64
+(static, so they run on any distribution). Pick one way to install.
+
+**With [Homebrew](https://brew.sh)**, on macOS:
+
+```sh
+brew tap cemcatik/tap
+brew install cemcatik/tap/rexurrect
+```
+
+Tap the tap first: Homebrew 6 and later won't install from a tap you haven't tapped yourself.
+Installing by the formula's full name then trusts only rexurrect, not everything in the tap.
+
+**With the shell installer**, on macOS or Linux, which downloads the binary for your machine and
+puts it in `~/.cargo/bin`, where `cargo install` would:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/cemcatik/rexurrect/releases/latest/download/rexurrect-installer.sh | sh
+```
+
+**With cargo**, from source, with a [Rust toolchain](https://rustup.rs) (1.89 or later)
+installed:
 
 ```sh
 cargo install --git https://github.com/cemcatik/rexurrect
 ```
 
 That builds `rexurrect` and puts it in `~/.cargo/bin`, which rustup adds to your `PATH`.
+
+Each release's binaries carry a GitHub build-provenance attestation. To check that an archive
+from a [release](https://github.com/cemcatik/rexurrect/releases) was built by this repository's
+release workflow:
+
+```sh
+gh attestation verify rexurrect-aarch64-apple-darwin.tar.xz --repo cemcatik/rexurrect
+```
+
 rexurrect talks to Rex through the `rex` CLI that ships with Rex: the one on your `PATH` (it is
 inside Rex blocks), or else the one a running Rex server runs.
 
-To get last commands back, also load the zsh recorder (next section).
+### Set up
+
+Then, from a Rex block (so it sees the server and settings you use):
+
+```sh
+rexurrect setup
+```
+
+`setup` turns [autosave](#autosave) on, exactly as `rexurrect autosave install` does, and takes
+the same `--interval` option. Then it prints the two lines still to add, which it leaves for you
+to add (it never edits `~/.zshrc` or Rex's `init.lua`):
+
+1. the [auto-restore](#auto-restore) line for Rex's `init.lua`, with a command that appends it
+   there;
+2. the line that loads [the zsh recorder](#the-zsh-recorder). Installed with Homebrew, that's a
+   `source` line naming the recorder Homebrew installed. Installed another way, `setup` points
+   you to the next section instead.
+
+Running `setup` again is safe: it replaces the autosave job (the launchd agent, or on Linux the
+systemd timer) and prints the same lines again.
 
 ### The zsh recorder
 
 [`rexurrect.plugin.zsh`](rexurrect.plugin.zsh) records each command a block's shell
-starts as that block's last command. Load it from `~/.zshrc` in either of these ways.
+starts as that block's last command. Load it from `~/.zshrc` in one of these ways.
+
+**Installed with Homebrew**, the recorder is already on disk, at
+`$(brew --prefix)/share/rexurrect/rexurrect.plugin.zsh`, a path that stays the same across
+`brew upgrade`. `rexurrect setup` prints the line to add to `~/.zshrc`:
+
+```sh
+source /opt/homebrew/share/rexurrect/rexurrect.plugin.zsh
+```
+
+(`/usr/local` instead of `/opt/homebrew` on an Intel Mac.) With oh-my-zsh, link its directory
+in as a custom plugin instead, then add `rexurrect` to `plugins=(...)` in `~/.zshrc`:
+
+```sh
+ln -s "$(brew --prefix)/share/rexurrect" "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/rexurrect"
+```
+
+Installed another way, download it, then load it with a plain `source` or as an oh-my-zsh custom
+plugin.
 
 **Plain `source`:**
 
@@ -673,9 +740,14 @@ each account's server started by Rex's login server (`rex-login-server.service`)
 from the Rex app on a Mac. The account's shell there is bash. Other distributions, init
 systems and setups will be added here as they're tried and reported.
 
-**Install** as above, with `cargo install`. Last commands come from the program running in each
-block (see [Usage](#usage)): the recorder is zsh-only, so a bash block's last command is the
-program that was in its foreground, not the last command typed at its prompt.
+**Install** as above, with the shell installer or cargo (Homebrew on Linux isn't supported), then
+[set up](#set-up) with `rexurrect setup`, which installs the systemd timer described
+[below](#autosave-on-linux). The recorder is in each release archive, but neither install puts
+it where `setup` looks, so for a zsh account `setup` points you to
+[the zsh recorder](#the-zsh-recorder) instead of printing a `source` line. Last commands come
+from the program running in each block (see [Usage](#usage)): the recorder is zsh-only, so a
+bash block's last command is the program that was in its foreground, not the last command typed
+at its prompt.
 
 `save`, `restore` and auto-restore work as on macOS. With no `REX_SERVER` set (outside Rex,
 over SSH, say), rexurrect uses `rex`'s default endpoint, `$XDG_RUNTIME_DIR/rex/server.sock`,
@@ -813,19 +885,68 @@ If auto-restore can't tell which endpoint is the server's (one containing a spac
 percent-encoded; Rex's own endpoints are encoded), it gives up and logs that rather than restore
 into any other server.
 
+## Uninstalling
+
+1. **Turn autosave off first**, while rexurrect is still installed:
+
+   ```sh
+   rexurrect autosave uninstall
+   ```
+
+   A Homebrew formula has no uninstall hook, so `brew uninstall` can't remove the autosave agent.
+   An agent left behind runs a binary that's gone, every 15 minutes, and since its output is
+   discarded, it fails without a trace.
+
+2. **Uninstall the binary**: `brew uninstall rexurrect`, or `cargo uninstall rexurrect`, or,
+   for the shell installer, `rm ~/.cargo/bin/rexurrect`.
+
+3. **Remove the two lines** `setup` had you add: the auto-restore line from Rex's `init.lua`, and
+   the line that loads the recorder from `~/.zshrc` (with oh-my-zsh, `rexurrect` in
+   `plugins=(...)` and its directory or link under `$ZSH_CUSTOM/plugins`). Then open new shells.
+
+Your snapshots stay in the [state directory](#where-state-lives); delete it if you don't need
+them.
+
+## Switching install method
+
+Autosave and the auto-restore line name the `rexurrect` they were set up with, by its full path:
+`/opt/homebrew/bin/rexurrect` from Homebrew, `~/.cargo/bin/rexurrect` from cargo or the shell
+installer. (Those two share a path, so switching between them needs nothing.) After switching
+between Homebrew and either of them, from a new shell where `rexurrect` is the one you keep:
+
+1. run `rexurrect setup` again, which replaces the autosave agent;
+2. replace the auto-restore line in `init.lua` with the one it prints;
+3. if you load the recorder from Homebrew's copy and are leaving Homebrew, load a downloaded one
+   instead (see [the zsh recorder](#the-zsh-recorder)), or switch to Homebrew's if you're moving
+   to it;
+4. uninstall the copy you're leaving (step 2 of [Uninstalling](#uninstalling)).
+
 ## Development
 
+CI runs these checks on every pull request and every push to main. Run them before pushing:
+
 ```sh
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --document-private-items --locked
+cargo test --locked                      # CI: only `--bins`, and `--tests --no-run`
+zsh -n rexurrect.plugin.zsh
+cargo deny --locked check                # licenses, advisories, bans, sources
+cargo +1.89 build --all-targets --locked # the minimum Rust version, rust-version
+typos
+zizmor .github                           # the workflows, dist's included
 ```
+
+**CI doesn't run the integration tests**, only compiles them. They run the built binary against
+throwaway Rex servers, and Rex is a private beta that CI can't install, so CI never downloads,
+links to or references it. A green check means the integration tests compile, not that they
+pass: run `cargo test` locally.
 
 The integration tests run the built binary against throwaway Rex servers, so they need the
 `rex` CLI on `PATH` (or its path in `REX_BIN`). Each test starts its own server under
 `/tmp/rxt.*` with its own state directory, config file and minimal zsh config, and stops it
-afterwards.
-They never touch your real Rex server, sessions or snapshots. The shared harness is in
-`tests/common/`.
+afterwards. They never touch your real Rex server, sessions or snapshots. The shared harness is
+in `tests/common/`.
 
 Autosave's tests never touch the real launchd or systemd either: `launchctl` and `systemctl`
 are found on `PATH`, so they put a stand-in first, and `REXURRECT_LAUNCH_AGENTS_DIR` replaces
@@ -836,7 +957,8 @@ To try autosave on the real launchd or systemd without touching your own job, al
 `REXURRECT_AUTOSAVE_LABEL` to a scratch label (for both `install` and `uninstall`); with
 systemd it names the units.
 
-Code for Linux only (reading `/proc`) isn't compiled on macOS. To type-check it there:
+Code for Linux only (reading `/proc`) isn't compiled on macOS, so CI also runs clippy, the unit
+tests and the integration tests' compile on Linux. To type-check it on macOS:
 
 ```sh
 rustup target add x86_64-unknown-linux-musl
@@ -852,3 +974,29 @@ for auto-restore's entry in the log doesn't wait half a minute. A test that sets
 writes its own file in its place.
 
 Terms (session, window, block, label, lineage, ...) follow [GLOSSARY.md](GLOSSARY.md).
+
+## Releasing
+
+```sh
+scripts/release.sh 0.2.0
+```
+
+The script refuses to release unless the working tree is clean, the tag `v0.2.0` doesn't exist
+yet, and formatting, clippy and the **full** `cargo test` pass, integration tests included, so it
+needs Rex installed. It checks all of that before changing anything. Then it bumps the version,
+commits `chore: release v0.2.0`, tags it, and pushes the commit and the tag together.
+
+The tag starts the release workflow, which [dist](https://axodotdev.github.io/cargo-dist) generates
+from `dist-workspace.toml`: it builds the binaries for macOS (Apple Silicon and Intel) and Linux
+(x86-64 and ARM64), attests them, publishes the GitHub release with the shell installer, and
+updates the `rexurrect` formula in [cemcatik/homebrew-tap](https://github.com/cemcatik/homebrew-tap).
+A prerelease version (`0.2.0-rc.1`) publishes a GitHub release and leaves the formula alone.
+Every pull request runs dist's plan, so a broken release config shows up before a tag does.
+
+Change the release workflow through `dist-workspace.toml` and `dist generate`, never by hand: a
+hand-edited workflow makes dist's plan fail. That includes the actions it uses, pinned to commit
+SHAs in `[dist.github-action-commits]`; Dependabot leaves that workflow alone.
+
+The repository needs, set by hand: a `HOMEBREW_TAP_TOKEN` secret (a fine-grained token with
+contents read and write on `cemcatik/homebrew-tap` only), immutable releases, and the policy that
+requires actions pinned to full commit SHAs.

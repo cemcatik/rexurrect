@@ -2,7 +2,9 @@
 //!
 //! Each subcommand with options parses them into the options struct its module
 //! defines. To add a subcommand: a `Command` variant, a line in `parse`, a
-//! `parse_<name>` function and a line in `USAGE`.
+//! `parse_<name>` function and a line in `USAGE`. A subcommand that takes
+//! another's options reuses its struct and parser: `setup` takes
+//! `autosave install`'s.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -20,6 +22,7 @@ pub enum Command {
     Autosave(AutosaveCommand),
     AutoRestore(AutoRestoreOptions),
     Report(ReportOptions),
+    Setup(InstallOptions),
     Help,
     Version,
 }
@@ -36,6 +39,7 @@ impl Command {
             Command::Autosave(AutosaveCommand::Install(_)) => Some("autosave install"),
             Command::Autosave(AutosaveCommand::Uninstall) => Some("autosave uninstall"),
             Command::AutoRestore(_) => Some("auto-restore"),
+            Command::Setup(_) => Some("setup"),
             Command::Report(_) | Command::Help | Command::Version => None,
         }
     }
@@ -61,6 +65,8 @@ Commands:
             For a program's hook: store the program's resume state for the
             block it runs in (the hook's payload on stdin, without a value).
             Never prints, always exits 0
+  setup     Turn autosave on, then print the lines that turn auto-restore
+            and the zsh recorder on, for you to add
   help      Show this help
 
 Restore options:
@@ -69,7 +75,7 @@ Restore options:
   --session <label>  Restore only the saved sessions with this label
   -n, --dry-run      Print what would be created and skipped; create nothing
 
-Autosave install options:
+Autosave install and setup options:
   --interval <minutes>  Save this often instead (default: 15)
 
 Auto-restore options:
@@ -136,6 +142,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, UsageE
         "list" => no_options(&mut args, "list").map(|()| Command::List),
         "autosave" => parse_autosave(&mut args).map(Command::Autosave),
         "auto-restore" => parse_auto_restore(&mut args).map(Command::AutoRestore),
+        "setup" => parse_install(&mut args, "setup").map(Command::Setup),
         "help" => Ok(Command::Help),
         "-V" | "--version" | "version" => Ok(Command::Version),
         other => Err(UsageError(format!("unknown command {other:?}"))),
@@ -168,29 +175,32 @@ fn parse_autosave(args: &mut Args) -> Result<AutosaveCommand, UsageError> {
         return Err(UsageError("autosave needs `install` or `uninstall`".into()));
     };
     match action.as_str() {
-        "install" => {
-            let mut options = InstallOptions::default();
-            while let Some(arg) = args.next() {
-                match arg.as_str() {
-                    "--interval" => {
-                        let minutes = args.value(&arg)?;
-                        options.interval = Interval::parse_minutes(&minutes).ok_or_else(|| {
-                            UsageError(format!(
-                                "--interval takes a whole number of minutes, at least 1, not {minutes:?}"
-                            ))
-                        })?;
-                    }
-                    _ => return Err(args.unexpected(&arg, "autosave install")),
-                }
-            }
-            Ok(AutosaveCommand::Install(options))
-        }
+        "install" => parse_install(args, "autosave install").map(AutosaveCommand::Install),
         "uninstall" => match args.next() {
             Some(arg) => Err(args.unexpected(&arg, "autosave uninstall")),
             None => Ok(AutosaveCommand::Uninstall),
         },
         _ => Err(args.unexpected(&action, "autosave")),
     }
+}
+
+/// The options of `autosave install`, which `setup` shares.
+fn parse_install(args: &mut Args, command: &str) -> Result<InstallOptions, UsageError> {
+    let mut options = InstallOptions::default();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--interval" => {
+                let minutes = args.value(&arg)?;
+                options.interval = Interval::parse_minutes(&minutes).ok_or_else(|| {
+                    UsageError(format!(
+                        "--interval takes a whole number of minutes, at least 1, not {minutes:?}"
+                    ))
+                })?;
+            }
+            _ => return Err(args.unexpected(&arg, command)),
+        }
+    }
+    Ok(options)
 }
 
 fn parse_auto_restore(args: &mut Args) -> Result<AutoRestoreOptions, UsageError> {

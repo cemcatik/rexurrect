@@ -5,8 +5,9 @@
 //! LaunchAgents directory pointed at a temp dir and a stand-in `launchctl`
 //! first on `PATH` ([`FakeLaunchd`]) that keeps track of which agents are
 //! loaded. The installed agent's job is then run the way launchd would run
-//! it ([`Agent::run_as_launchd`]): its program, arguments and environment
-//! only, so no `REX_SERVER` from the test leaks in.
+//! it ([`Agent::run_as_launchd`](common::launchd::Agent::run_as_launchd)):
+//! its program, arguments and environment only, so no `REX_SERVER` from the
+//! test leaks in.
 //!
 //! macOS only, like launchd (and `plutil`, which reads the plists). The
 //! systemd timer has tests of its own, in `autosave_systemd.rs`.
@@ -15,192 +16,8 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
+use common::launchd::{FakeLaunchd, LABEL};
 use common::*;
-use serde_json::Value;
-
-const AGENTS_DIR_VAR: &str = "REXURRECT_LAUNCH_AGENTS_DIR";
-const LABEL: &str = "io.github.cemcatik.rexurrect.autosave";
-
-/// A stand-in for the user's launchd domain: a LaunchAgents directory and a
-/// `launchctl` that models `print`, `bootstrap` and `bootout` on it the way
-/// the real one answers (bootstrapping a loaded agent fails, booting out an
-/// agent that isn't loaded fails). It keeps a copy of each loaded agent's
-/// plist as it was when bootstrapped, as launchd does.
-struct FakeLaunchd {
-    dir: PathBuf,
-}
-
-impl FakeLaunchd {
-    fn new(env: &TestEnv) -> FakeLaunchd {
-        let dir = env.mkdir("launchd");
-        for sub in ["bin", "loaded", "LaunchAgents"] {
-            std::fs::create_dir_all(dir.join(sub)).unwrap();
-        }
-        write_script(&dir.join("bin/launchctl"), &launchctl_script(&dir));
-        FakeLaunchd { dir }
-    }
-
-    /// `cmd` with its LaunchAgents directory and `launchctl` pointed here.
-    fn aim(&self, cmd: RexurrectCmd) -> RexurrectCmd {
-        cmd.env(AGENTS_DIR_VAR, self.agents_dir())
-            .path_prepend(self.dir.join("bin"))
-    }
-
-    fn agents_dir(&self) -> PathBuf {
-        self.dir.join("LaunchAgents")
-    }
-
-    /// Makes every `bootstrap` from now on fail, the way launchd refuses a
-    /// plist it can't load.
-    fn refuse_to_load(&self) {
-        std::fs::write(self.dir.join("refuse-bootstrap"), "").unwrap();
-    }
-
-    /// The plists in the LaunchAgents directory.
-    fn installed(&self) -> Vec<Agent> {
-        plists_in(&self.agents_dir())
-    }
-
-    /// The agents loaded into the fake domain, as they were bootstrapped.
-    fn loaded(&self) -> Vec<Agent> {
-        plists_in(&self.dir.join("loaded"))
-    }
-
-    /// The one agent installed and loaded, checking the two agree.
-    fn the_agent(&self) -> Agent {
-        let installed = self.installed();
-        let loaded = self.loaded();
-        assert_eq!(installed.len(), 1, "installed agents: {installed:?}");
-        assert_eq!(loaded.len(), 1, "loaded agents: {loaded:?}");
-        assert_eq!(
-            installed[0].plist, loaded[0].plist,
-            "the loaded agent is the installed one"
-        );
-        loaded.into_iter().next().unwrap()
-    }
-}
-
-fn launchctl_script(dir: &Path) -> String {
-    format!(
-        r#"#!/bin/sh
-# Stand-in launchctl (rexurrect test harness).
-state='{dir}'
-printf '%s\n' "$*" >> "$state/calls"
-case "$1" in
-  print)
-    label=${{2##*/}}
-    if [ -f "$state/loaded/$label.plist" ]; then echo "$2 = {{ ... }}"; exit 0; fi
-    echo "Could not find service \"$label\" in domain for user gui" >&2
-    exit 113 ;;
-  bootstrap)
-    if [ -f "$state/refuse-bootstrap" ]; then
-      echo "Bootstrap failed: 5: Input/output error" >&2
-      exit 5
-    fi
-    label=$(/usr/bin/plutil -extract Label raw -o - "$3") || exit 5
-    if [ -f "$state/loaded/$label.plist" ]; then
-      echo "Bootstrap failed: 5: Input/output error" >&2
-      exit 5
-    fi
-    cp "$3" "$state/loaded/$label.plist" ;;
-  bootout)
-    label=${{2##*/}}
-    if [ ! -f "$state/loaded/$label.plist" ]; then
-      echo "Boot-out failed: 3: No such process" >&2
-      exit 3
-    fi
-    rm "$state/loaded/$label.plist" ;;
-  *)
-    echo "stand-in launchctl: unexpected call: $*" >&2
-    exit 64 ;;
-esac
-"#,
-        dir = dir.display()
-    )
-}
-
-/// A launchd agent plist, parsed by `plutil`.
-#[derive(Debug)]
-struct Agent {
-    plist: Value,
-}
-
-fn plists_in(dir: &Path) -> Vec<Agent> {
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .collect();
-    paths.sort();
-    paths.iter().map(|p| Agent::read(p)).collect()
-}
-
-impl Agent {
-    fn read(path: &Path) -> Agent {
-        let out = Command::new("/usr/bin/plutil")
-            .args(["-convert", "json", "-o", "-"])
-            .arg(path)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{} isn't a valid plist: {}",
-            path.display(),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        Agent {
-            plist: serde_json::from_slice(&out.stdout).unwrap(),
-        }
-    }
-
-    fn label(&self) -> &str {
-        self.plist["Label"].as_str().unwrap()
-    }
-
-    fn program_arguments(&self) -> Vec<&str> {
-        self.plist["ProgramArguments"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|a| a.as_str().unwrap())
-            .collect()
-    }
-
-    fn start_interval(&self) -> u64 {
-        self.plist["StartInterval"].as_u64().unwrap()
-    }
-
-    /// Where launchd sends the job's stdout and stderr.
-    fn output_paths(&self) -> [Option<&str>; 2] {
-        ["StandardOutPath", "StandardErrorPath"].map(|key| self.plist[key].as_str())
-    }
-
-    fn environment(&self) -> Vec<(&str, &str)> {
-        self.plist["EnvironmentVariables"]
-            .as_object()
-            .map(|vars| {
-                vars.iter()
-                    .map(|(k, v)| (k.as_str(), v.as_str().unwrap()))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Runs the agent's job the way launchd runs it: its program and
-    /// arguments, with launchd's own small environment plus the agent's
-    /// `EnvironmentVariables` (see [`run_job`]).
-    fn run_as_launchd(&self, env: &TestEnv) -> RunOutput {
-        run_job(
-            env,
-            "launchd",
-            &self.program_arguments(),
-            &["USER", "LOGNAME", "SHELL", "TMPDIR"],
-            self.environment(),
-        )
-    }
-}
 
 #[test]
 fn install_loads_an_agent_that_saves_every_15_minutes_by_default() {
@@ -592,5 +409,5 @@ fn a_config_file_rexurrect_cannot_use_installs_nothing() {
         .assert_failure();
 
     assert!(out.stderr.contains("`keep`"), "{out}");
-    assert_eq!(plists_in(&launchd.agents_dir()).len(), 0);
+    assert_eq!(launchd.installed().len(), 0);
 }

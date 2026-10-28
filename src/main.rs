@@ -31,6 +31,7 @@ mod save;
 mod scheduler;
 mod scrollback;
 mod settings;
+mod setup;
 mod snapshot;
 mod startup;
 mod state;
@@ -64,6 +65,7 @@ fn main() -> ExitCode {
             logging_failure("auto-restore", auto_restore::run(&options))
         }
         Command::Report(options) => report::run(&options),
+        Command::Setup(options) => setup::run(&options),
         Command::Help => {
             print!("{}", cli::USAGE);
             Ok(ExitCode::SUCCESS)

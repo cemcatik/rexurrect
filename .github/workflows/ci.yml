@@ -1,0 +1,178 @@
+# Fast checks for every pull request and push to main.
+#
+# The integration tests (tests/*.rs) run against real Rex servers, and Rex is
+# a private beta: CI never installs, downloads or references it. They're only
+# compiled here. Run them locally with `cargo test`; the release script won't
+# tag a version until they pass.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --check
+
+  clippy:
+    name: Clippy
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  doc:
+    # For a binary crate, documenting private items is the only way rustdoc
+    # checks the intra-doc links.
+    name: Doc links
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo doc --no-deps --document-private-items --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: Unit tests (integration tests compiled only; they need Rex, run `cargo test` locally)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Unit tests
+        run: cargo test --bins --locked
+      - name: Compile the integration tests without running them
+        run: cargo test --tests --no-run --locked
+      - name: Say what didn't run
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          **The integration tests didn't run.** They run against real Rex servers, and CI
+          has no Rex, so they were only compiled. Run them locally, with `rex` on `PATH`:
+
+          ```sh
+          cargo test
+          ```
+          SUMMARY
+
+  linux:
+    # The Linux-only code (reading /proc, the systemd timer's Linux defaults)
+    # and its unit tests aren't compiled on macOS. Rex runs on Linux too, but
+    # CI still has no Rex, so here too the integration tests are only compiled.
+    name: Linux (clippy, unit tests; integration tests compiled only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit tests
+        run: cargo test --bins --locked
+      - name: Compile the integration tests without running them
+        run: cargo test --tests --no-run --locked
+
+  recorder:
+    name: Recorder syntax
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: zsh -n rexurrect.plugin.zsh
+
+  deny:
+    name: Dependency policy
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # cargo-deny-action runs in Docker, which macOS runners don't have.
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --locked check
+
+  msrv:
+    name: Minimum Rust version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Read from Cargo.toml, so the version checked is always the one declared.
+      - id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --all-targets --locked
+
+  typos:
+    name: Typos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
+
+  zizmor:
+    # Lints this workflow and dist's release workflow. Findings in dist's
+    # generated workflow are handled in .github/zizmor.yml, never by editing it.
+    name: Workflow security
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          # Annotations need no permission to upload to code scanning.
+          advanced-security: false
+          annotations: true

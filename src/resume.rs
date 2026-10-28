@@ -4,11 +4,13 @@
 //!
 //! A block resumes only if save found its program in its foreground
 //! ([`SavedBlock::resume`]), its program definition, read now, can build a
-//! resume command for it (see [`ProgramDefinition::resume_command`]), and no
-//! earlier block of this restore, in layout order, resumes the same program
-//! with the same reported state: two agents writing to one conversation
-//! would fight over it. Two Neovims loading one `Session.vim` are harmless,
-//! so a program that reports no state can resume in any number of blocks.
+//! resume command for it (see
+//! [`ProgramDefinition::resume_command`](crate::programs::ProgramDefinition::resume_command)),
+//! and no earlier block of this restore, in layout order, resumes the same
+//! program with the same reported state: two agents writing to one
+//! conversation would fight over it. Two Neovims loading one `Session.vim`
+//! are harmless, so a program that reports no state can resume in any number
+//! of blocks.
 //!
 //! A program listed in `auto_resume` auto-resumes (ADR-0006): its resume
 //! command is typed followed by Enter, so the block's shell runs it, records

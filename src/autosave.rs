@@ -42,7 +42,8 @@ pub fn run(command: &AutosaveCommand) -> Result<ExitCode> {
     }
 }
 
-fn install(options: &InstallOptions) -> Result<ExitCode> {
+/// `autosave install`, and the first step of `setup`.
+pub fn install(options: &InstallOptions) -> Result<ExitCode> {
     let program = std::env::current_exe().with_context(|| "finding rexurrect's own path")?;
     let state = StateDir::from_env()?;
     let job = Job {
