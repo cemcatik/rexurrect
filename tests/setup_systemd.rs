@@ -59,8 +59,9 @@ fn setup_prints_the_auto_restore_line_and_how_to_append_it_to_init_lua() {
     );
 }
 
-/// No Linux install puts the recorder beside the binary: `cargo install`
-/// doesn't, and there are no Linux release archives.
+/// No Linux install puts the recorder where setup looks: `cargo install`
+/// doesn't install it, and neither does the shell installer, though it's in
+/// the release archive.
 #[test]
 fn without_a_recorder_beside_the_binary_setup_points_to_the_readme_and_sources_nothing() {
     let env = TestEnv::new();

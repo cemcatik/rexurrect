@@ -16,9 +16,10 @@ needs nothing else at runtime.
 
 ## Install
 
-Prebuilt binaries are for macOS, on Apple Silicon and Intel. Pick one way to install.
+Prebuilt binaries are for macOS, on Apple Silicon and Intel, and for Linux, on x86-64 and ARM64
+(static, so they run on any distribution). Pick one way to install.
 
-**With [Homebrew](https://brew.sh):**
+**With [Homebrew](https://brew.sh)**, on macOS:
 
 ```sh
 brew tap cemcatik/tap
@@ -28,8 +29,8 @@ brew install cemcatik/tap/rexurrect
 Tap the tap first: Homebrew 6 and later won't install from a tap you haven't tapped yourself.
 Installing by the formula's full name then trusts only rexurrect, not everything in the tap.
 
-**With the shell installer**, which downloads the binary for your Mac and puts it in
-`~/.cargo/bin`, where `cargo install` would:
+**With the shell installer**, on macOS or Linux, which downloads the binary for your machine and
+puts it in `~/.cargo/bin`, where `cargo install` would:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/cemcatik/rexurrect/releases/latest/download/rexurrect-installer.sh | sh
@@ -739,9 +740,10 @@ each account's server started by Rex's login server (`rex-login-server.service`)
 from the Rex app on a Mac. The account's shell there is bash. Other distributions, init
 systems and setups will be added here as they're tried and reported.
 
-**Install** as above, with `cargo install`, then [set up](#set-up) with `rexurrect setup`, which
-installs the systemd timer described [below](#autosave-on-linux). No Linux install puts the
-recorder beside the binary, so for a zsh account `setup` points you to
+**Install** as above, with the shell installer or cargo (Homebrew on Linux isn't supported), then
+[set up](#set-up) with `rexurrect setup`, which installs the systemd timer described
+[below](#autosave-on-linux). The recorder is in each release archive, but neither install puts
+it where `setup` looks, so for a zsh account `setup` points you to
 [the zsh recorder](#the-zsh-recorder) instead of printing a `source` line. Last commands come
 from the program running in each block (see [Usage](#usage)): the recorder is zsh-only, so a
 bash block's last command is the program that was in its foreground, not the last command typed
@@ -985,11 +987,11 @@ needs Rex installed. It checks all of that before changing anything. Then it bum
 commits `chore: release v0.2.0`, tags it, and pushes the commit and the tag together.
 
 The tag starts the release workflow, which [dist](https://axodotdev.github.io/cargo-dist) generates
-from `dist-workspace.toml`: it builds the macOS binaries for Apple Silicon and Intel, attests them,
-publishes the GitHub release with the shell installer, and updates the `rexurrect` formula in
-[cemcatik/homebrew-tap](https://github.com/cemcatik/homebrew-tap). A prerelease version
-(`0.2.0-rc.1`) publishes a GitHub release and leaves the formula alone. Every pull request runs
-dist's plan, so a broken release config shows up before a tag does.
+from `dist-workspace.toml`: it builds the binaries for macOS (Apple Silicon and Intel) and Linux
+(x86-64 and ARM64), attests them, publishes the GitHub release with the shell installer, and
+updates the `rexurrect` formula in [cemcatik/homebrew-tap](https://github.com/cemcatik/homebrew-tap).
+A prerelease version (`0.2.0-rc.1`) publishes a GitHub release and leaves the formula alone.
+Every pull request runs dist's plan, so a broken release config shows up before a tag does.
 
 Change the release workflow through `dist-workspace.toml` and `dist generate`, never by hand: a
 hand-edited workflow makes dist's plan fail. That includes the actions it uses, pinned to commit

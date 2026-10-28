@@ -15,8 +15,8 @@ rules:
   template-injection:
     ignore:
       - release.yml
-  # dist runs builds in a container only for Linux targets, and rexurrect
-  # builds none.
+  # dist runs a Linux build in a container only when [dist.github-custom-runners]
+  # gives its target one, and rexurrect's Linux targets have none.
   unpinned-images:
     ignore:
       - release.yml
