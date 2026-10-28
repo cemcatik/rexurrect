@@ -323,7 +323,6 @@ Built in:
 | Neovim (`nvim`) | `nvim -S` | a `Session.vim` is in the block's working directory |
 | Claude Code (`claude`) | `claude --resume <conversation ID>` | its hook has reported the conversation |
 | Codex (`codex`) | `codex resume <conversation ID>` | its hook has reported the conversation |
-| pi (`pi`) | `pi --session <conversation's session file>` | its extension has reported the conversation |
 
 Some programs need to tell rexurrect something for it to resume them: an agent its conversation's
 ID, say. That's the program's **resume state**, and the program reports it with
@@ -459,22 +458,6 @@ conversation>` typed. Codex runs the hook with its first turn, not when it opens
 you hadn't sent anything yet (which has no conversation to resume) comes back with its last
 command. Codex installed with npm runs as `node`, and is matched by its script's name, `codex`.
 
-### pi
-
-pi reports its conversation's session file from an extension, which runs whenever pi starts a
-conversation: when pi starts, and after `/new`, `/resume` and `/fork`. Only in pi's interactive mode: `pi -p` and its
-other modes never change the block. Print the extension straight into pi's extensions
-directory:
-
-```sh
-rexurrect report pi --print-hook > ~/.pi/agent/extensions/rexurrect.ts
-```
-
-(`$PI_CODING_AGENT_DIR/extensions/` instead, if you set it.) It names rexurrect by its full path
-and pins the state directory and config file, so print it again if you move any of them. From
-then on, a block that was running `pi` comes back with `pi --session <its conversation's session
-file>` typed.
-
 ### Auto-resume
 
 By default, restore never runs anything: every resume command is typed for you to run. Programs
@@ -522,7 +505,7 @@ definition's fields:
 | `fallback` | What an auto-resumed program that can't resume runs: `"command"`, its own command line, or `"none"`, its last command typed | `"command"` |
 | `enabled` | `false` turns the definition off | `true` |
 
-A table named like a built-in (`nvim`, `claude`, `codex`, `pi`) overrides it field by field: the fields you set
+A table named like a built-in (`nvim`, `claude`, `codex`) overrides it field by field: the fields you set
 replace the built-in's, and the rest keep the built-in's. `requires_file = ""` removes the
 built-in's requirement, and `enabled = false` turns it off, so its blocks come back with their
 last command. `resume` uses `{state}` exactly when `state` isn't `"none"`. Each definition's

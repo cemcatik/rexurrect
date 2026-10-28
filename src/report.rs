@@ -292,12 +292,10 @@ fn print_hook(options: &ReportOptions) -> Result<ExitCode> {
         .programs
         .get(program)
         .ok_or_else(|| Error::new(format!("no program definition is named {program:?}")))?;
-    let pinned = Pinned::here()?;
-    let command = report_command(&pinned, program);
+    let command = report_command(program)?;
     match definition.hook {
         Some(Hook::ClaudeCode) => print!("{}", session_start_hook(&command)),
         Some(Hook::Codex) => print!("{}", codex_hook(&command)),
-        Some(Hook::Pi) => print!("{}", pi_extension(&pinned, program)),
         None if definition.state == StateKind::None => {
             return Err(Error::new(format!(
                 "{program} reports no resume state, so it needs no hook"
@@ -308,43 +306,28 @@ fn print_hook(options: &ReportOptions) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Where a hook finds rexurrect: its full path, and the state directory
-/// and config file as they are here.
-struct Pinned {
-    rexurrect: String,
-    state_dir: String,
-    config_file: String,
-}
-
-impl Pinned {
-    fn here() -> Result<Pinned> {
-        let rexurrect = std::env::current_exe().with_context(|| "finding rexurrect's own path")?;
-        Ok(Pinned {
-            rexurrect: utf8(&rexurrect)?,
-            state_dir: utf8(StateDir::from_env()?.path())?,
-            config_file: utf8(ConfigFile::from_env()?.path())?,
-        })
-    }
-}
-
 /// The command a hook runs: `REXURRECT_STATE_DIR=… REXURRECT_CONFIG=…
-/// <rexurrect> report <program>`, each value quoted for the shell. Single
-/// quotes, where needed, mean the same to `sh` and zsh.
-fn report_command(pinned: &Pinned, program: &str) -> String {
-    format!(
+/// <rexurrect> report <program>`, each value quoted for the shell.
+fn report_command(program: &str) -> Result<String> {
+    let rexurrect = std::env::current_exe().with_context(|| "finding rexurrect's own path")?;
+    let state = StateDir::from_env()?;
+    let config = ConfigFile::from_env()?;
+    Ok(format!(
         "{STATE_DIR_VAR}={} {CONFIG_VAR}={} {} report {}",
-        foreground::quoted(&pinned.state_dir),
-        foreground::quoted(&pinned.config_file),
-        foreground::quoted(&pinned.rexurrect),
+        shell_word(state.path())?,
+        shell_word(config.path())?,
+        shell_word(&rexurrect)?,
         foreground::quoted(program),
-    )
+    ))
 }
 
-/// `path` as a string, which a hook's command or code can hold.
-fn utf8(path: &Path) -> Result<String> {
-    path.to_str()
-        .map(str::to_string)
-        .ok_or_else(|| Error::new(format!("{} isn't valid UTF-8", path.display())))
+/// `path` as one word for `sh` (and zsh): single quotes, where needed, mean
+/// the same to both.
+fn shell_word(path: &Path) -> Result<String> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| Error::new(format!("{} isn't valid UTF-8", path.display())))?;
+    Ok(foreground::quoted(path))
 }
 
 /// The hooks for Codex: its `SessionStart` hook for `~/.codex/hooks.json`,
@@ -356,46 +339,6 @@ fn codex_hook(command: &str) -> String {
     format!(
         "# In ~/.codex/hooks.json:\n{}\n# In ~/.codex/config.toml:\n[features]\nhooks = true\n",
         session_start_hook(command)
-    )
-}
-
-/// The pi extension for `~/.pi/agent/extensions/`, reporting the session
-/// file of the conversation on screen as `program` whenever pi starts one:
-/// at startup, and after `/new`, `/resume` and `/fork`, each of which
-/// starts the extension again.
-/// Only in pi's TUI: `pi -p` and its other modes run headless, as tools
-/// inside another program, and mustn't take over the block. As herdr's, it
-/// keeps quiet rather than throw inside pi if pi's API isn't what it
-/// expects.
-fn pi_extension(pinned: &Pinned, program: &str) -> String {
-    let js = |value: &str| serde_json::to_string(value).expect("strings serialize");
-    format!(
-        r#"// Reports pi's conversation to rexurrect, so that a block running pi in Rex
-// resumes it after a restart. Printed by `rexurrect report {program} --print-hook`;
-// print it again if rexurrect, its state directory or its config file moves.
-import {{ execFile }} from "node:child_process";
-
-const REXURRECT = {rexurrect};
-const ENV = {{ {STATE_DIR_VAR}: {state_dir}, {CONFIG_VAR}: {config_file} }};
-
-export default function (pi) {{
-  pi.on("session_start", (_event, ctx) => {{
-    if (ctx.mode !== "tui") return;
-    let file;
-    try {{
-      file = ctx.sessionManager.getSessionFile();
-    }} catch {{
-      return;
-    }}
-    if (typeof file !== "string") return;
-    execFile(REXURRECT, ["report", {program_js}, file], {{ env: {{ ...process.env, ...ENV }} }}, () => {{}});
-  }});
-}}
-"#,
-        rexurrect = js(&pinned.rexurrect),
-        state_dir = js(&pinned.state_dir),
-        config_file = js(&pinned.config_file),
-        program_js = js(program),
     )
 }
 

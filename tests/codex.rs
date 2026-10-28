@@ -1,10 +1,9 @@
-//! Codex and pi, built in: a block running either comes back with its
-//! agent's conversation typed, once the agent's hook has reported it.
+//! Codex, built in: a block running it comes back with its conversation
+//! typed, once its hook has reported it.
 //!
-//! The agents are stand-ins ([`stand_in_bin`]). A stand-in Codex hook is
-//! `rexurrect report codex` fed a recorded `SessionStart` payload; a
-//! stand-in pi extension is `rexurrect report pi <session file>`, run with
-//! the block's `REX_BLOCK`, as each would be.
+//! Codex is a stand-in ([`stand_in_bin`]), and its hook is `rexurrect
+//! report codex` run with the block's `REX_BLOCK`, fed a recorded
+//! `SessionStart` payload, as Codex would run it.
 
 mod common;
 
@@ -102,26 +101,6 @@ fn a_program_an_interpreter_runs_is_matched_by_its_scripts_name() {
 }
 
 #[test]
-fn a_block_running_pi_that_reported_its_session_file_comes_back_with_it_typed() {
-    let env = TestEnv::new();
-    stand_in_bin(&env, "pi");
-    let server = env.start_server();
-    let dir = env.mkdir("a");
-    let (session, block) = running(&server, "zz-pi", &dir, "pi");
-    let file = "/Users/u/.pi/agent/sessions/--w-a--/2026-10-27T16-05-00-000Z_s.jsonl";
-
-    reported(&env, &server, &block, &["pi", file], "");
-
-    restored_with_typed(
-        &env,
-        &server,
-        &session,
-        "zz-pi",
-        &format!("pi --session {file}"),
-    );
-}
-
-#[test]
 fn print_hook_prints_codexs_hook_and_feature_flag_and_changes_no_file() {
     let env = TestEnv::builder().own_home().build();
     let server = env.start_server();
@@ -148,31 +127,5 @@ fn print_hook_prints_codexs_hook_and_feature_flag_and_changes_no_file() {
     );
     let config: toml::Table = config.parse().unwrap();
     assert_eq!(config["features"]["hooks"].as_bool(), Some(true));
-    assert_eq!(files::contents(env.root()), before);
-}
-
-#[test]
-fn print_hook_prints_pis_extension_and_changes_no_file() {
-    let env = TestEnv::builder().own_home().build();
-    let server = env.start_server();
-    let before = files::contents(env.root());
-
-    let out = env
-        .rexurrect(&server)
-        .args(["report", "pi", "--print-hook"])
-        .run()
-        .assert_success();
-
-    for expected in [
-        format!("const REXURRECT = {:?};", common::rexurrect::bin()),
-        format!(
-            "REXURRECT_STATE_DIR: {:?}",
-            env.state_dir().display().to_string()
-        ),
-        r#"["report", "pi", file]"#.to_string(),
-        r#"pi.on("session_start""#.to_string(),
-    ] {
-        assert!(out.stdout.contains(&expected), "{expected}: {}", out.stdout);
-    }
     assert_eq!(files::contents(env.root()), before);
 }

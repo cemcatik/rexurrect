@@ -11,8 +11,7 @@
 //!   `Session.vim`, as tmux-resurrect's `session` strategy does;
 //! - Claude Code, which reports its agent conversation's ID from a
 //!   `SessionStart` hook (see `report`);
-//! - Codex, which reports its thread's ID from a `SessionStart` hook too;
-//! - pi, which reports its session file from an extension.
+//! - Codex, which reports its thread's ID from a `SessionStart` hook too.
 //!
 //! A program goes by the names Rex gives its process and, when it's an
 //! interpreter's script (an npm-installed agent runs as `node`), by its
@@ -108,8 +107,6 @@ pub enum Hook {
     /// `session_id`, unless a `CODEX_THREAD_ID` it inherited names another
     /// (a Codex started from inside another's).
     Codex,
-    /// A pi extension, which passes its session file as the value.
-    Pi,
 }
 
 /// What an auto-resumed program that can't resume comes back as.
@@ -204,15 +201,6 @@ impl Default for Programs {
                     resume: format!("codex resume {STATE_PLACEHOLDER}"),
                     requires_file: None,
                     hook: Some(Hook::Codex),
-                    fallback: Fallback::Command,
-                },
-                ProgramDefinition {
-                    name: "pi".to_string(),
-                    matches: vec!["pi".to_string()],
-                    state: StateKind::Path,
-                    resume: format!("pi --session {STATE_PLACEHOLDER}"),
-                    requires_file: None,
-                    hook: Some(Hook::Pi),
                     fallback: Fallback::Command,
                 },
             ],
@@ -451,18 +439,6 @@ mod tests {
     }
 
     #[test]
-    fn pi_resumes_its_session_file() {
-        let dir = Dir::new("pi");
-        assert_eq!(
-            builtin("pi")
-                .resume_command(&dir.0, Some("/u/.pi/agent/sessions/--w--/s.jsonl"))
-                .as_deref(),
-            Some("pi --session /u/.pi/agent/sessions/--w--/s.jsonl")
-        );
-        assert_eq!(builtin("pi").resume_command(&dir.0, Some("s.jsonl")), None);
-    }
-
-    #[test]
     fn an_id_is_letters_digits_and_a_few_marks_and_never_an_option() {
         for id in ["abc", "0b9e1f2a-61c4", "thread_1.2:3", "A"] {
             assert!(StateKind::Id.accepts(id), "{id}");
@@ -540,7 +516,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             programs.names().collect::<Vec<_>>(),
-            ["myvim", "nvim", "claude", "codex", "pi"]
+            ["myvim", "nvim", "claude", "codex"]
         );
         let myvim = programs.get("myvim").unwrap();
         assert_eq!(myvim.state, StateKind::None);
