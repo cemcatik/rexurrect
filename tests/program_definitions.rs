@@ -158,6 +158,15 @@ fn report_drops_a_value_that_doesnt_fit_the_programs_state_kind() {
     );
 
     restored_with_typed(&env, &server, &session, "zz-unfit", "myrepl");
+    // The log names the value, so a hook sending the wrong one can be told
+    // from one sending nothing.
+    let logged = env.log_entries();
+    assert!(
+        logged
+            .iter()
+            .any(|e| e.contains(r#"the value "/not/an/id" isn't an ID"#)),
+        "{logged:#?}"
+    );
 }
 
 #[test]

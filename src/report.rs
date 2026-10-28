@@ -135,7 +135,11 @@ fn store(
         return Err(Dropped::Quietly);
     };
     if !definition.state.accepts(&value) {
-        return because(&format!("the value isn't {}", definition.state.described()));
+        return because(&format!(
+            "the value {} isn't {}",
+            shown(&value),
+            definition.state.described()
+        ));
     }
     let reported = Reported {
         program: definition.name.clone(),
@@ -143,6 +147,18 @@ fn store(
     };
     ResumeStates::new(state).write(block_id, &reported)?;
     Ok(())
+}
+
+/// The longest part of a value that `report` shows in the log.
+const MAX_SHOWN: usize = 100;
+
+/// `value` as the log shows it: quoted, with control characters escaped,
+/// and cut short past [`MAX_SHOWN`] characters.
+fn shown(value: &str) -> String {
+    match value.char_indices().nth(MAX_SHOWN) {
+        Some((end, _)) => format!("{:?}…", &value[..end]),
+        None => format!("{value:?}"),
+    }
 }
 
 /// Whether `id` can be a block ID Rex gave: what `REX_BLOCK` holds in a
@@ -406,6 +422,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_value_is_shown_quoted_escaped_and_cut_short() {
+        assert_eq!(shown("a b"), r#""a b""#);
+        assert_eq!(shown("a\nb"), r#""a\nb""#);
+        let long = "é".repeat(MAX_SHOWN + 1);
+        assert_eq!(shown(&long), format!("{:?}…", "é".repeat(MAX_SHOWN)));
+    }
+
+    #[test]
     fn a_block_id_is_rexs_and_nothing_that_reaches_elsewhere() {
         assert!(is_block_id("block:0b9e1f2a-61c4-4d1e-9a0f-3c2b1d4e5f60"));
         for id in ["", ".", "..", "../x", "a/b", ".hidden", "block:x y", "a\0b"] {
@@ -414,7 +438,7 @@ mod tests {
         assert!(!is_block_id(&"b".repeat(MAX_BLOCK_ID_LEN + 1)));
     }
 
-    fn shown(value: std::result::Result<Option<String>, Dropped>) -> Option<String> {
+    fn outcome(value: std::result::Result<Option<String>, Dropped>) -> Option<String> {
         value.unwrap_or_else(|dropped| match dropped {
             Dropped::Quietly => None,
             Dropped::Because(cause) => Some(format!("dropped: {cause}")),
@@ -422,11 +446,11 @@ mod tests {
     }
 
     fn claude(payload: &str) -> Option<String> {
-        shown(claude_code_value(payload.as_bytes()))
+        outcome(claude_code_value(payload.as_bytes()))
     }
 
     fn codex(payload: &str, inherited_thread: Option<&str>) -> Option<String> {
-        shown(codex_value(payload.as_bytes(), inherited_thread))
+        outcome(codex_value(payload.as_bytes(), inherited_thread))
     }
 
     /// As Codex 0.165 sends it.
