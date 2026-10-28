@@ -455,7 +455,9 @@ Codex runs a hook only once you trust it: the next time it starts, it says the h
 review, and you trust it there. It asks again whenever the hook's command changes, as it does
 when you print it again after moving rexurrect.
 From then on, a block that was running `codex` comes back with `codex resume <its
-conversation>` typed. Codex installed with npm runs as `node`, and is matched by its script's name, `codex`.
+conversation>` typed. Codex runs the hook with its first turn, not when it opens, so a Codex
+you hadn't sent anything yet (which has no conversation to resume) comes back with its last
+command. Codex installed with npm runs as `node`, and is matched by its script's name, `codex`.
 
 ### pi
 
