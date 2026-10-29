@@ -778,6 +778,11 @@ Entries are regular expressions matched from the start of a package's name, so w
 it would leave every package whose name starts with `rex` alone too. This costs nothing:
 `unattended-upgrade` never installed Rex's own updates, and `apt upgrade` still follows Rex's pin.
 
+Other distributions may package (R)?ex, or some other tool, as `rex` too, and their automatic
+updates may swap it in the same way. rexurrect recognizes (R)?ex wherever it comes from, by what
+`rex -v` prints. Any other tool named `rex` just fails with its own error, so if `save` fails
+with output that doesn't look like Rex's, check what `rex -v` prints.
+
 ### Autosave on Linux
 
 `autosave install` writes two systemd user units to `$XDG_CONFIG_HOME/systemd/user` (else
