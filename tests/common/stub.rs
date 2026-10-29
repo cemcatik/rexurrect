@@ -1,5 +1,7 @@
 //! A stub `rex` for output a throwaway server doesn't produce: a changed
 //! beta API, or an answer that would take megabytes of output to provoke.
+//! Also `rex`es that aren't stubs of Rex's: a stand-in for (R)?ex, and one
+//! that records how it was run.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -8,6 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use serde_json::Value;
 
 use super::env::TestEnv;
+use super::scheduled::write_script;
 use super::server::rex_bin;
 
 /// A directory holding a stub `rex` script. Put it first on one run's
@@ -238,26 +241,39 @@ echo '[2026-10-28 06:23:04] WARN - No Rexfile found.' >&2
 echo "[2026-10-28 06:23:04] ERROR - No task named 'api' found." >&2
 exit 1
 "#;
-    let rex = dir.join("rex");
-    std::fs::write(&rex, script).unwrap();
-    std::fs::set_permissions(&rex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_script(&dir.join("rex"), script);
     dir
 }
 
-/// A directory holding a `rex` that appends each run's arguments, as one
-/// line, to the file it returns too, then runs the real `rex`.
-pub fn recording_rex(env: &TestEnv) -> (PathBuf, PathBuf) {
-    let dir = env.mkdir("recording-rex");
-    let record = dir.join("runs");
-    let script = format!(
-        "#!/bin/sh\necho \"$*\" >> {}\nexec {} \"$@\"\n",
-        sh_quote(&record),
-        sh_quote(rex_bin())
-    );
-    let rex = dir.join("rex");
-    std::fs::write(&rex, script).unwrap();
-    std::fs::set_permissions(&rex, std::fs::Permissions::from_mode(0o755)).unwrap();
-    (dir, record)
+/// A directory holding a `rex` that records each run's arguments, then
+/// runs the real `rex`. Put it first on one run's `PATH` with
+/// `path_prepend(recording.dir())`.
+pub struct RecordingRex {
+    dir: PathBuf,
+}
+
+impl RecordingRex {
+    pub fn new(env: &TestEnv) -> RecordingRex {
+        let dir = env.mkdir("recording-rex");
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> {}\nexec {} \"$@\"\n",
+            sh_quote(&dir.join("runs")),
+            sh_quote(rex_bin())
+        );
+        write_script(&dir.join("rex"), &script);
+        RecordingRex { dir }
+    }
+
+    /// The directory to put first on `PATH`.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Each run's arguments so far, one run per item, oldest first.
+    pub fn runs(&self) -> Vec<String> {
+        let runs = std::fs::read_to_string(self.dir.join("runs")).unwrap_or_default();
+        runs.lines().map(str::to_string).collect()
+    }
 }
 
 /// `path` as one single-quoted shell word.

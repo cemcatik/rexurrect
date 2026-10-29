@@ -69,10 +69,10 @@ fn a_save_and_restore_that_succeed_never_check_for_perl_rex() {
     let server = env.start_server();
     let fixture = server.create_session("zz-kept", &[window(shell(env.mkdir("a")))]);
     server.wait_for_pwds(&fixture);
-    let (recording, runs) = recording_rex(&env);
+    let recording = RecordingRex::new(&env);
     let run = |command: &str| {
         env.rexurrect(&server)
-            .path_prepend(&recording)
+            .path_prepend(recording.dir())
             .arg(command)
             .run()
             .assert_success()
@@ -82,9 +82,31 @@ fn a_save_and_restore_that_succeed_never_check_for_perl_rex() {
     server.kill_session(&fixture.id);
     run("restore");
 
-    let runs = std::fs::read_to_string(runs).unwrap();
-    assert!(runs.contains("api call"), "the recording rex ran: {runs}");
-    assert!(!runs.lines().any(|args| args == "-v"), "{runs}");
+    let runs = recording.runs();
+    assert!(!runs.is_empty(), "the recording rex ran");
+    assert!(!runs.iter().any(|args| args == "-v"), "{runs:#?}");
+}
+
+#[test]
+fn a_save_with_no_server_running_says_so_without_checking_for_perl_rex() {
+    let env = TestEnv::new();
+    let endpoint = {
+        let server = env.start_server();
+        server.endpoint().to_string()
+    }; // The server stops: nothing answers at its endpoint any more.
+    let recording = RecordingRex::new(&env);
+
+    let run = env
+        .rexurrect_at(&endpoint)
+        .path_prepend(recording.dir())
+        .arg("save")
+        .run()
+        .assert_failure();
+
+    assert!(run.stderr.contains("isn't running"), "{run}");
+    let runs = recording.runs();
+    assert!(!runs.is_empty(), "the recording rex ran");
+    assert!(!runs.iter().any(|args| args == "-v"), "{runs:#?}");
 }
 
 #[test]

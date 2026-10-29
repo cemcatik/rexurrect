@@ -203,6 +203,10 @@ fn rex_on_path() -> Option<PathBuf> {
         .find(|rex| is_executable(rex))
 }
 
+fn is_executable(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
 /// Whether the `rex` at `program` is (R)?ex, judged as Rex's docs do: its
 /// `rex -v` prints `(R)?ex` (Rex's CLI prints its usage). Run only once a
 /// call through it has failed, to say why.
@@ -213,10 +217,6 @@ fn is_perl_rex(program: &Path) -> bool {
         .stderr(Stdio::null())
         .output()
         .is_ok_and(|out| out.stdout.starts_with(b"(R)?ex"))
-}
-
-fn is_executable(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 impl Rex {
