@@ -226,6 +226,40 @@ pub fn slow_rex(env: &TestEnv, method: &str, seconds: f64) -> PathBuf {
     dir
 }
 
+/// A directory holding a stand-in for (R)?ex, the Perl automation tool that
+/// Debian and Ubuntu also package as `rex`, as it behaves with no Rexfile
+/// around: `rex -v` prints its version, and anything else (an `api call`)
+/// prints its Rexfile warnings on stderr and exits 1.
+pub fn perl_rex(env: &TestEnv) -> PathBuf {
+    let dir = env.mkdir("perl-rex");
+    let script = r#"#!/bin/sh
+if [ "$1" = -v ]; then echo '(R)?ex 1.8.1'; exit 0; fi
+echo '[2026-10-28 06:23:04] WARN - No Rexfile found.' >&2
+echo "[2026-10-28 06:23:04] ERROR - No task named 'api' found." >&2
+exit 1
+"#;
+    let rex = dir.join("rex");
+    std::fs::write(&rex, script).unwrap();
+    std::fs::set_permissions(&rex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+/// A directory holding a `rex` that appends each run's arguments, as one
+/// line, to the file it returns too, then runs the real `rex`.
+pub fn recording_rex(env: &TestEnv) -> (PathBuf, PathBuf) {
+    let dir = env.mkdir("recording-rex");
+    let record = dir.join("runs");
+    let script = format!(
+        "#!/bin/sh\necho \"$*\" >> {}\nexec {} \"$@\"\n",
+        sh_quote(&record),
+        sh_quote(rex_bin())
+    );
+    let rex = dir.join("rex");
+    std::fs::write(&rex, script).unwrap();
+    std::fs::set_permissions(&rex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (dir, record)
+}
+
 /// `path` as one single-quoted shell word.
 pub fn sh_quote(path: &Path) -> String {
     sh_word(path.to_str().unwrap())
