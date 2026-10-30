@@ -70,26 +70,8 @@ fn float(server: &Server, session_id: &str, block_id: &str) {
     );
 }
 
-/// How many floating layers each window of a live session has.
-fn floating_layers(server: &Server, session_id: &str) -> Vec<usize> {
-    let view = server.view(session_id);
-    view["windows"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|window| {
-            window["layers"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|layer| layer["kind"] == "floating")
-                .count()
-        })
-        .collect()
-}
-
 #[test]
-fn a_window_with_a_floating_layer_saves_and_restores_only_its_tiled_layout() {
+fn a_window_with_a_floating_layer_restores_it_over_its_tiled_layout() {
     let env = TestEnv::new();
     let server = env.start_server();
     let [a, b, floated] = ["a", "b", "floated"].map(|name| env.mkdir(name));
@@ -115,11 +97,18 @@ fn a_window_with_a_floating_layer_saves_and_restores_only_its_tiled_layout() {
         vec![hsplit(0.4, shell(&a), shell(&b)).expected_shape()],
         "the tiled layout as it was with the block floated away",
     );
-    assert_eq!(floating_layers(&server, &restored[0]), [0]);
+    let floating = server.floating_shapes(&restored[0]);
+    assert_eq!(floating.len(), 1);
+    let [layer] = floating[0].as_slice() else {
+        panic!("one floating layer: {floating:?}");
+    };
+    layer.assert_is([0.1, 0.1, 0.5, 0.5], &shell(&floated).expected_shape());
 }
 
+/// `session.create` requires a tiled layout for every window, so the
+/// emptied window gets a plain shell under its floating layers.
 #[test]
-fn a_window_whose_blocks_all_float_restores_as_one_shell_in_the_home_directory_in_its_place() {
+fn a_window_whose_blocks_all_float_restores_them_over_a_shell_in_home_in_its_place() {
     let env = TestEnv::new();
     let server = env.start_server();
     let home = env.mkdir("home");
@@ -156,7 +145,9 @@ fn a_window_whose_blocks_all_float_restores_as_one_shell_in_the_home_directory_i
         "the emptied window keeps its label"
     );
     assert_eq!(emptied.block_labels, ["shell"]);
-    assert_eq!(floating_layers(&server, &restored[0]), [0, 0, 0]);
+    let floating = server.floating_shapes(&restored[0]);
+    assert_eq!(floating.iter().map(Vec::len).collect::<Vec<_>>(), [0, 1, 0]);
+    floating[1][0].assert_is([0.1, 0.1, 0.5, 0.5], &shell(&floated).expected_shape());
 }
 
 /// Saves a session whose middle block the stand-in `rex` reports through

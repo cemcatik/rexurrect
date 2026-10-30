@@ -273,6 +273,58 @@ pub fn tiled_layouts(view: &Value) -> Vec<Shape> {
         .collect()
 }
 
+/// A floating layer as Rex reports it: where it sits in its window, as
+/// `[x, y, w, h]` fractions of the window, and its layout.
+#[derive(Clone, Debug)]
+pub struct FloatingShape {
+    pub bounds: [f64; 4],
+    pub layout: Shape,
+}
+
+impl FloatingShape {
+    /// Replaces each block's string with `f(string)`.
+    pub fn map_blocks(self, f: &mut impl FnMut(String) -> String) -> FloatingShape {
+        FloatingShape {
+            bounds: self.bounds,
+            layout: self.layout.map_blocks(f),
+        }
+    }
+
+    /// Asserts it's `layout` at `bounds`, the bounds within float tolerance.
+    pub fn assert_is(&self, bounds: [f64; 4], layout: &Shape) {
+        assert_eq!(&self.layout, layout, "{self:?}");
+        for (actual, expected) in self.bounds.iter().zip(bounds) {
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "bounds {:?}, expected {bounds:?}",
+                self.bounds
+            );
+        }
+    }
+}
+
+/// Each window's floating layers from a `session.view` result, in window
+/// order, each window's back to front, with block IDs at the leaves.
+pub fn floating_layouts(view: &Value) -> Vec<Vec<FloatingShape>> {
+    let windows = view["windows"].as_array().cloned().unwrap_or_default();
+    windows
+        .iter()
+        .map(|w| {
+            w["layers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|layer| layer["kind"] == "floating")
+                .map(|layer| FloatingShape {
+                    bounds: serde_json::from_value(layer["bounds"].clone())
+                        .unwrap_or_else(|e| panic!("bounds of {layer}: {e}")),
+                    layout: shape_of(&layer["layout"]),
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// A window's labels as `session.view` reports them.
 #[derive(Clone, Debug)]
 pub struct WindowLabels {

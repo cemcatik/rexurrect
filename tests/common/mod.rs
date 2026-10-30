@@ -74,7 +74,7 @@ pub mod zsh;
 
 pub use env::{CONFIG_VAR, STATE_DIR_VAR, SYSTEM_PATH, TestEnv};
 pub use fixture::{FixtureSession, Layout, Shape, Window, block, hsplit, shell, vsplit, window};
-pub use fixture::{WindowLabels, default_window_label, labels};
+pub use fixture::{FloatingShape, WindowLabels, default_window_label, floating_layouts, labels};
 pub use rexurrect::{RexurrectCmd, RunOutput, Running};
 pub use scheduled::{
     NO_SERVER, RECORDER_DOCS, assert_explains_backing_out, printed_hook, run_job, write_script,
