@@ -221,11 +221,11 @@ fn worth_saving(session: &SavedSession, home: &Path) -> bool {
     !session.windows.is_empty() && !is_untouched(session, home)
 }
 
-/// An untouched session: one window holding one shell block, with default
-/// window and block labels, its working directory still `home` and no last
-/// command. Restoring it would bring back nothing a new session doesn't
-/// have. Its label doesn't count: Rex's generated session labels can't be
-/// told apart from user-set ones.
+/// An untouched session: one window holding one shell block and nothing
+/// floating, with default window and block labels, its working directory
+/// still `home` and no last command. Restoring it would bring back nothing a
+/// new session doesn't have. Its label doesn't count: Rex's generated
+/// session labels can't be told apart from user-set ones.
 ///
 /// Judged from the session as saved: a last command counts however save
 /// found it, including one restore carried forward, and "no last command"
@@ -241,6 +241,7 @@ pub fn is_untouched(session: &SavedSession, home: &Path) -> bool {
         return false;
     };
     window.label.is_none()
+        && window.floating.is_empty()
         && block.label.is_none()
         && create::typed_command(block).is_none()
         && same_directory(&block.working_directory, home)

@@ -20,7 +20,7 @@ use crate::scrollback::{
     NoScrollbackPrograms, SavedScrollback, ScrollbackSource, ScrollbackStore, SnapshotScrollback,
 };
 use crate::snapshot::{
-    SavedBlock, SavedLayout, SavedResume, SavedSession, SavedSplit, SavedWindow,
+    SavedBlock, SavedFloatingLayer, SavedLayout, SavedResume, SavedSession, SavedSplit, SavedWindow,
 };
 use crate::startup::Starting;
 use crate::state::StateDir;
@@ -258,9 +258,11 @@ struct Capture<'a> {
 }
 
 impl Capture<'_> {
-    /// A window's tiled layout. Floating layers aren't saved. A window whose
+    /// A window's tiled layout, then its floating layers, back to front,
+    /// their blocks saved in [`SavedWindow::blocks`] order. A window whose
     /// blocks have all floated away has nothing tiled; it comes back holding
-    /// one plain shell, so it keeps its place among the session's windows.
+    /// one plain shell under its floating layers, so it keeps its place among
+    /// the session's windows (`session.create` requires a tiled layout).
     fn saved_window(&mut self, window: &WindowView) -> Result<SavedWindow> {
         let tiled = window.tiled_layer().ok_or_else(|| {
             Error::new(format!(
@@ -272,9 +274,29 @@ impl Capture<'_> {
             Some(layout) => self.saved_layout(tiled, layout)?,
             None => SavedLayout::Block(self.plain_shell()),
         };
+        let floating = window
+            .floating_layers()
+            .map(|layer| self.saved_floating_layer(layer))
+            .collect::<Result<_>>()?;
         Ok(SavedWindow {
             label: label::user_set_window_label(window).map(str::to_owned),
             layout,
+            floating,
+        })
+    }
+
+    /// A floating layer: where it sits, and its layout, saved like a tiled
+    /// one. `session.view` always reports both (see
+    /// `SessionView::check_consistency`).
+    fn saved_floating_layer(&mut self, layer: &LayerView) -> Result<SavedFloatingLayer> {
+        let (Some(bounds), Some(layout)) = (layer.bounds, &layer.layout) else {
+            return Err(Error::new(
+                "session.view: a floating layer has no `bounds` or no `layout`",
+            ));
+        };
+        Ok(SavedFloatingLayer {
+            bounds,
+            layout: self.saved_layout(layer, layout)?,
         })
     }
 

@@ -1,10 +1,11 @@
-//! Turning a saved session into a `session.create` request.
+//! Turning a saved session into the requests that create it: a
+//! `session.create`, then a `session.new_layer` per floating layer.
 
 use std::path::Path;
 
 use crate::rex::api::{
-    CreateBlock, CreateLayout, CreateSession, CreateSplit, CreateWindow, SHELL_FLAVOR,
-    TerminalOptions,
+    CreateBlock, CreateFloatingLayer, CreateLayout, CreateSession, CreateSplit, CreateWindow,
+    SHELL_FLAVOR, TerminalOptions,
 };
 use crate::scrollback::Replay;
 use crate::snapshot::{SavedBlock, SavedLayout, SavedSession, SavedWindow};
@@ -33,35 +34,60 @@ pub fn as_created(saved: &SavedSession, home: &Path, replay: &Replay) -> SavedSe
     created
 }
 
-/// The request that creates `created`, a session [`as_created`] made.
+/// What creates a session: `session.create` makes its windows with their
+/// tiled layouts, then each window gets its floating layers.
+#[derive(Debug)]
+pub struct CreateRequests {
+    pub session: CreateSession,
+    /// For each of `session`'s windows, its floating layers, back to front:
+    /// the order to add them in, as each goes in front of the others.
+    pub floating_layers: Vec<Vec<CreateFloatingLayer>>,
+}
+
+/// The requests that create `created`, a session [`as_created`] made.
 /// `inputs` holds what to write to each block's terminal as if typed, in
 /// [`SavedSession::blocks`] order (see `resume`). `replay` prints each
 /// block's scrollback above its new prompt.
-pub fn create_request(
+pub fn create_requests(
     created: &SavedSession,
     inputs: &[Option<String>],
     replay: &Replay,
-) -> CreateSession {
+) -> CreateRequests {
     let mut inputs = inputs.iter().cloned();
-    CreateSession {
-        label: created.label.clone(),
-        initial_windows: created
-            .windows
-            .iter()
-            .map(|window| create_window(window, &mut inputs, replay))
-            .collect(),
+    let (initial_windows, floating_layers) = created
+        .windows
+        .iter()
+        .map(|window| create_window(window, &mut inputs, replay))
+        .unzip();
+    CreateRequests {
+        session: CreateSession {
+            label: created.label.clone(),
+            initial_windows,
+        },
+        floating_layers,
     }
 }
 
+/// A window and its floating layers, taking their blocks' inputs in
+/// [`SavedWindow::blocks`] order.
 fn create_window(
     window: &SavedWindow,
     inputs: &mut impl Iterator<Item = Option<String>>,
     replay: &Replay,
-) -> CreateWindow {
-    CreateWindow {
+) -> (CreateWindow, Vec<CreateFloatingLayer>) {
+    let tiled = CreateWindow {
         window_label: window.label.clone(),
         layout: create_layout(&window.layout, inputs, replay),
-    }
+    };
+    let floating = window
+        .floating
+        .iter()
+        .map(|layer| CreateFloatingLayer {
+            bounds: layer.bounds.clamped(),
+            layout: create_layout(&layer.layout, inputs, replay),
+        })
+        .collect();
+    (tiled, floating)
 }
 
 fn create_layout(

@@ -45,6 +45,10 @@ A block that lives on a host rather than on the local server.
 **Layout**:
 A window's tree of splits and blocks: how the window's space is divided. Floating layers aren't part of it.
 
+**Floating layer**:
+A layout that sits over a window's layout, in a rectangle of its own (its bounds, as fractions of the window). A window can have several, stacked back to front. A save keeps each one's bounds and layout, and its blocks like any other block; a restore adds them over the window's layout in the same stacking order, without moving focus. A window whose blocks have all floated away comes back with a plain shell in the home directory as its layout, under its floating layers.
+_Avoid_: floating window, popup
+
 **Split**:
 A layout node that divides its space between two child nodes in one direction, at a ratio.
 

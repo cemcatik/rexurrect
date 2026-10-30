@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::env::{TestEnv, prepend_path};
-use super::fixture::{FixtureSession, Shape, Window, tiled_layouts};
+use super::fixture::{
+    FixtureSession, FloatingShape, Layout, Shape, Window, floating_layouts, tiled_layouts,
+};
 use super::tempdir::TempDir;
 
 /// How long the harness waits for a server, a `pwd` or a capture.
@@ -539,6 +541,51 @@ impl Server {
             .map(|layout| {
                 layout.map_blocks(&mut |block_id| self.wait_for_pwd(session_id, &block_id))
             })
+            .collect()
+    }
+
+    /// Each window's floating layers, in window order, each window's back to
+    /// front, with every block replaced by its working directory (waiting for
+    /// each block to report one).
+    pub fn floating_shapes(&self, session_id: &str) -> Vec<Vec<FloatingShape>> {
+        floating_layouts(&self.view(session_id))
+            .into_iter()
+            .map(|layers| {
+                layers
+                    .into_iter()
+                    .map(|layer| {
+                        layer.map_blocks(&mut |block_id| self.wait_for_pwd(session_id, &block_id))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Adds a floating layer holding `layout` at `bounds` (`[x, y, w, h]`) to
+    /// the front of a window, without focusing it, and returns its blocks'
+    /// IDs in layout order.
+    pub fn new_layer(
+        &self,
+        session_id: &str,
+        window_id: &str,
+        bounds: [f64; 4],
+        layout: &Layout,
+    ) -> Vec<String> {
+        let created = self.call(
+            "session.new_layer",
+            &json!({
+                "session_id": session_id,
+                "window_id": window_id,
+                "bounds": bounds,
+                "layout": layout.to_json(),
+                "focus": false,
+            }),
+        );
+        created["block_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().unwrap().to_string())
             .collect()
     }
 

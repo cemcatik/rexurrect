@@ -16,7 +16,7 @@ use crate::log;
 use crate::recorder::RecorderFiles;
 use crate::resume::{Input, Resuming};
 use crate::rex::Rex;
-use crate::rex::api::{CreatedSession, ServerStatus};
+use crate::rex::api::{CreateFloatingLayer, CreatedSession, NewLayer, ServerStatus};
 use crate::scrollback::Replay;
 use crate::snapshot::{SavedSession, Snapshot};
 use crate::startup::StartingSessions;
@@ -280,14 +280,15 @@ fn restore_sessions(
             continue;
         }
         let saved = exited::without_exited_programs(saved, &recorder);
-        let as_created = create::as_created(&saved, &home, &replay);
-        let inputs: Vec<Option<Input>> = as_created.blocks().map(|b| resuming.input(b)).collect();
+        let mut as_created = create::as_created(&saved, &home, &replay);
+        let mut inputs: Vec<Option<Input>> =
+            as_created.blocks().map(|b| resuming.input(b)).collect();
         let keystrokes: Vec<Option<String>> = inputs
             .iter()
             .map(|input| input.as_ref().map(Input::keystrokes))
             .collect();
-        let request = create::create_request(&as_created, &keystrokes, &replay);
-        let created = match rex.create_session(&request) {
+        let requests = create::create_requests(&as_created, &keystrokes, &replay);
+        let created = match rex.create_session(&requests.session) {
             Ok(created) => created,
             Err(e) => {
                 report.outcomes.push(Outcome::Failed {
@@ -308,19 +309,23 @@ fn restore_sessions(
             )
         })?;
         live.insert(saved.lineage.clone(), created.session_id.clone());
+        // A layer that can't be created leaves the session restored without
+        // it: a note, as below.
+        let mut notes = Vec::new();
+        let layer_ids = new_layers(rex, &created, &requests.floating_layers, &mut notes);
+        without_missing_layers(&mut as_created, &mut inputs, &layer_ids);
         // session.create leaves the last window active: open on the first.
-        let note = match created.initial_windows.as_slice() {
-            [first, _, ..] => rex
-                .focus_window(&created.session_id, &first.window_id)
-                .err()
-                .map(|e| format!("couldn't focus its first window: {e}")),
-            _ => None,
-        };
+        if let [first, _, ..] = created.initial_windows.as_slice()
+            && let Err(e) = rex.focus_window(&created.session_id, &first.window_id)
+        {
+            notes.push(format!("couldn't focus its first window: {e}"));
+        }
+        let note = (!notes.is_empty()).then(|| notes.join("; "));
         // Restore no longer writes recorder files (#6 had it seed each new
         // block's with what it typed there, which kept the foreground
         // fallback from ever applying to a restored block): what it typed
         // is the block's default, which a program seen there replaces.
-        let block_ids = new_block_ids(&as_created, &created);
+        let block_ids = new_block_ids(&as_created, &created, &layer_ids);
         let recording = || {
             format!(
                 "recording what restored session {} was created with",
@@ -413,13 +418,82 @@ fn selected_sessions<'a>(
     Ok(selected)
 }
 
-/// The IDs of the blocks `session.create` created for `as_created`, in
-/// [`SavedSession::blocks`] order.
+/// Adds each window of `created` its floating layers, `layers` (in window
+/// order, each window's back to front), without focusing any. Returns the
+/// new blocks' IDs, layer by layer the same way, `None` for a layer that
+/// couldn't be created; each of those is a note in `notes`.
 ///
-/// `session.create` returns each window's block IDs in layout order
-/// (depth-first, `before` then `after`), the order `SavedLayout::blocks`
-/// walks the saved layout in.
-fn new_block_ids(as_created: &SavedSession, created: &CreatedSession) -> Result<Vec<String>> {
+/// Each layer goes in front of the window's others, so adding them back to
+/// front stacks them as they were.
+fn new_layers(
+    rex: &Rex,
+    created: &CreatedSession,
+    layers: &[Vec<CreateFloatingLayer>],
+    notes: &mut Vec<String>,
+) -> Vec<Vec<Option<Vec<String>>>> {
+    let mut ids = Vec::new();
+    for (w, (window, layers)) in created.initial_windows.iter().zip(layers).enumerate() {
+        let mut window_ids = Vec::new();
+        for (l, layer) in layers.iter().enumerate() {
+            let request = NewLayer {
+                session_id: &created.session_id,
+                window_id: &window.window_id,
+                bounds: layer.bounds,
+                layout: &layer.layout,
+                focus: false,
+            };
+            window_ids.push(match rex.new_layer(&request) {
+                Ok(new) => Some(new.block_ids),
+                Err(e) => {
+                    notes.push(format!(
+                        "couldn't restore floating layer {} of window {}: {e}",
+                        l + 1,
+                        w + 1
+                    ));
+                    None
+                }
+            });
+        }
+        ids.push(window_ids);
+    }
+    ids
+}
+
+/// Leaves out of `as_created`, and of `inputs` (one per block of it, in
+/// [`SavedSession::blocks`] order), the floating layers that
+/// [`new_layers`] didn't create, `None` in `layer_ids`, so both describe
+/// the session as it is.
+fn without_missing_layers(
+    as_created: &mut SavedSession,
+    inputs: &mut Vec<Option<Input>>,
+    layer_ids: &[Vec<Option<Vec<String>>>],
+) {
+    // Whether each block of `as_created` was created, in `inputs`' order.
+    let mut kept = Vec::new();
+    for (window, layer_ids) in as_created.windows.iter_mut().zip(layer_ids) {
+        kept.extend(window.layout.blocks().iter().map(|_| true));
+        let mut layer_ids = layer_ids.iter();
+        window.floating.retain(|layer| {
+            let created = layer_ids.next().is_some_and(Option::is_some);
+            kept.extend(layer.layout.blocks().iter().map(|_| created));
+            created
+        });
+    }
+    let mut kept = kept.into_iter();
+    inputs.retain(|_| kept.next().unwrap_or(true));
+}
+
+/// The IDs of the blocks `session.create` and then [`new_layers`] created
+/// for `as_created`, in [`SavedSession::blocks`] order. `as_created` holds
+/// only the floating layers that were created ([`without_missing_layers`]).
+///
+/// Both return a layout's block IDs in layout order (depth-first, `before`
+/// then `after`), the order `SavedLayout::blocks` walks the saved layout in.
+fn new_block_ids(
+    as_created: &SavedSession,
+    created: &CreatedSession,
+    layer_ids: &[Vec<Option<Vec<String>>>],
+) -> Result<Vec<String>> {
     if created.initial_windows.len() != as_created.windows.len() {
         return Err(Error::new(format!(
             "session.create returned {} windows for {} saved ones",
@@ -428,10 +502,11 @@ fn new_block_ids(as_created: &SavedSession, created: &CreatedSession) -> Result<
         )));
     }
     let mut ids = Vec::new();
-    for (i, (window, created_window)) in as_created
+    for (i, ((window, created_window), layer_ids)) in as_created
         .windows
         .iter()
         .zip(&created.initial_windows)
+        .zip(layer_ids)
         .enumerate()
     {
         let blocks = window.layout.blocks().len();
@@ -442,6 +517,17 @@ fn new_block_ids(as_created: &SavedSession, created: &CreatedSession) -> Result<
             )));
         }
         ids.extend(created_window.block_ids.iter().cloned());
+        for (layer, layer_ids) in window.floating.iter().zip(layer_ids.iter().flatten()) {
+            let blocks = layer.layout.blocks().len();
+            if blocks != layer_ids.len() {
+                return Err(Error::new(format!(
+                    "session.new_layer returned {} block IDs for a floating layer of window \
+                     {i}, which has {blocks} saved blocks",
+                    layer_ids.len(),
+                )));
+            }
+            ids.extend(layer_ids.iter().cloned());
+        }
     }
     Ok(ids)
 }

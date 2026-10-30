@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::lineage::Lineage;
-use crate::rex::api::Direction;
+use crate::rex::api::{Bounds, Direction};
 use crate::timestamp::Timestamp;
 
 /// Bumped on incompatible changes to this format.
@@ -35,8 +35,9 @@ impl Snapshot {
     }
 
     /// Checks what restore relies on: every session has at least one window
-    /// and every split ratio is in (0, 1). That every layout node is exactly
-    /// one of a block or a split holds by construction ([`SavedLayout`]).
+    /// and every split ratio, tiled or floating, is in (0, 1). That every
+    /// layout node is exactly one of a block or a split holds by
+    /// construction ([`SavedLayout`]).
     pub fn validate(&self) -> Result<()> {
         for session in &self.sessions {
             if session.windows.is_empty() {
@@ -46,13 +47,16 @@ impl Snapshot {
                 )));
             }
             for (i, window) in session.windows.iter().enumerate() {
-                validate_layout(&window.layout).map_err(|e| {
-                    Error::new(format!(
-                        "session {:?}, window {}: {e}",
-                        session.label,
-                        i + 1
-                    ))
-                })?;
+                window
+                    .layouts()
+                    .try_for_each(validate_layout)
+                    .map_err(|e| {
+                        Error::new(format!(
+                            "session {:?}, window {}: {e}",
+                            session.label,
+                            i + 1
+                        ))
+                    })?;
             }
         }
         Ok(())
@@ -87,18 +91,14 @@ pub struct SavedSession {
 }
 
 impl SavedSession {
-    /// Every block, window by window, in [`SavedLayout::blocks`] order.
+    /// Every block, window by window, in [`SavedWindow::blocks`] order.
     pub fn blocks(&self) -> impl Iterator<Item = &SavedBlock> {
-        self.windows
-            .iter()
-            .flat_map(|window| window.layout.blocks())
+        self.windows.iter().flat_map(SavedWindow::blocks)
     }
 
     /// [`SavedSession::blocks`], to change.
     pub fn blocks_mut(&mut self) -> impl Iterator<Item = &mut SavedBlock> {
-        self.windows
-            .iter_mut()
-            .flat_map(|window| window.layout.blocks_mut())
+        self.windows.iter_mut().flat_map(SavedWindow::blocks_mut)
     }
 }
 
@@ -108,6 +108,41 @@ pub struct SavedWindow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// The window's tiled layout.
+    pub layout: SavedLayout,
+    /// The window's floating layers, back to front. Absent from snapshots
+    /// taken before #84, and for windows with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub floating: Vec<SavedFloatingLayer>,
+}
+
+impl SavedWindow {
+    /// Its tiled layout, then each floating layer's, back to front.
+    pub fn layouts(&self) -> impl Iterator<Item = &SavedLayout> {
+        std::iter::once(&self.layout).chain(self.floating.iter().map(|layer| &layer.layout))
+    }
+
+    /// The window's blocks: its tiled layout's, then each floating layer's,
+    /// back to front, each layout's in [`SavedLayout::blocks`] order. The
+    /// order Rex returns new blocks' IDs in, window by window and layer by
+    /// layer.
+    pub fn blocks(&self) -> Vec<&SavedBlock> {
+        self.layouts().flat_map(SavedLayout::blocks).collect()
+    }
+
+    /// [`SavedWindow::blocks`], to change.
+    pub fn blocks_mut(&mut self) -> Vec<&mut SavedBlock> {
+        std::iter::once(&mut self.layout)
+            .chain(self.floating.iter_mut().map(|layer| &mut layer.layout))
+            .flat_map(SavedLayout::blocks_mut)
+            .collect()
+    }
+}
+
+/// A floating layer: a layout over the window's tiled one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedFloatingLayer {
+    /// Where it sits in its window, as Rex reported it.
+    pub bounds: Bounds,
     pub layout: SavedLayout,
 }
 
@@ -232,6 +267,41 @@ mod tests {
         let resume = block.resume.unwrap();
         assert_eq!(resume.program, "nvim");
         assert_eq!(resume.command_line.as_deref(), Some("nvim init.lua"));
+    }
+
+    /// Snapshots taken before #84 have no floating layers, and a window
+    /// with none is written as before.
+    #[test]
+    fn a_window_saved_before_floating_layers_were_has_none_and_writes_none() {
+        let window: SavedWindow = serde_json::from_value(json!({
+            "layout": { "block": { "working_directory": "/w/a" } },
+        }))
+        .unwrap();
+        assert!(window.floating.is_empty());
+        let written = serde_json::to_value(&window).unwrap();
+        assert_eq!(written.get("floating"), None, "{written}");
+    }
+
+    #[test]
+    fn a_floating_layers_blocks_come_after_the_tiled_layouts_back_to_front() {
+        let block = |dir: &str| json!({ "block": { "working_directory": dir } });
+        let window: SavedWindow = serde_json::from_value(json!({
+            "layout": block("/tiled"),
+            "floating": [
+                { "bounds": [0.1, 0.1, 0.5, 0.5], "layout": { "split": {
+                    "direction": "vertical", "ratio": 0.3,
+                    "before": block("/back/top"), "after": block("/back/bottom"),
+                } } },
+                { "bounds": [0.2, 0.2, 0.5, 0.5], "layout": block("/front") },
+            ],
+        }))
+        .unwrap();
+        let dirs: Vec<_> = window
+            .blocks()
+            .iter()
+            .map(|b| b.working_directory.to_str().unwrap())
+            .collect();
+        assert_eq!(dirs, ["/tiled", "/back/top", "/back/bottom", "/front"]);
     }
 
     /// Snapshots taken before #60 name no block, so restore can't tell

@@ -1,5 +1,6 @@
 //! The Rex API shapes rexurrect reads and sends, as verified against
-//! Rex 0.0.1791570264-g7b5bf3.
+//! Rex 0.0.1791570264-g7b5bf3 (floating layers and `session.new_layer`:
+//! 0.0.1793131181-gdd9a20).
 //!
 //! Parsing is strict about what rexurrect relies on (a changed shape is an
 //! error, not an empty snapshot) and lenient about the rest: unknown keys are
@@ -15,6 +16,25 @@ use serde::{Deserialize, Serialize};
 
 /// The terminal shell block flavor, today the only one Rex has.
 pub const SHELL_FLAVOR: &str = "com.superlogical.terminal.shell";
+
+/// Where a floating layer sits in its window: `[x, y, w, h]`, fractions of
+/// the window's width and height, measured from its top-left corner.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Bounds(pub [f64; 4]);
+
+impl Bounds {
+    /// The bounds made to fit inside the window, as `session.new_layer`
+    /// requires: `x` and `y` within `[0, 1]`, and `w` and `h` shrunk so that
+    /// `x + w` and `y + h` are at most 1. Bounds Rex reported already fit;
+    /// this keeps a rounding error in a snapshot from failing the call.
+    pub fn clamped(self) -> Bounds {
+        // Shrunk rather than moved, so the layer keeps its top-left corner.
+        // In f64, `x + (1 - x)` doesn't round past 1.
+        let Bounds([x, y, w, h]) = self;
+        let (x, y) = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+        Bounds([x, y, w.min(1.0 - x), h.min(1.0 - y)])
+    }
+}
 
 /// Split direction. `horizontal`: side by side, `before` on the left.
 /// `vertical`: stacked, `before` on top. `ratio` is `before`'s share.
@@ -70,7 +90,9 @@ impl SessionView {
     /// with nothing to save):
     /// - `windows` is absent only when there's no `active_window_id` either;
     /// - a tiled layer's `layout` is null only when its `blocks` are empty
-    ///   (every block floated away).
+    ///   (every block floated away);
+    /// - a floating layer always has its `bounds` and a `layout`, which
+    ///   save relies on.
     pub fn check_consistency(&self) -> Result<(), String> {
         if self.windows.is_empty() && self.active_window_id.is_some() {
             return Err("it names an active window but has no `windows`".into());
@@ -82,6 +104,17 @@ impl SessionView {
             {
                 return Err(format!(
                     "window {}: its tiled layer has blocks but no `layout`",
+                    window.window_id
+                ));
+            }
+            for floating in window.floating_layers() {
+                let missing = match (&floating.bounds, &floating.layout) {
+                    (Some(_), Some(_)) => continue,
+                    (None, _) => "bounds",
+                    (Some(_), None) => "layout",
+                };
+                return Err(format!(
+                    "window {}: a floating layer has no `{missing}`",
                     window.window_id
                 ));
             }
@@ -104,11 +137,24 @@ impl WindowView {
             .iter()
             .find(|layer| layer.kind == LayerKind::Tiled)
     }
+
+    /// The window's floating layers, back to front: `layers` lists them in
+    /// that order.
+    pub fn floating_layers(&self) -> impl Iterator<Item = &LayerView> {
+        self.layers
+            .iter()
+            .filter(|layer| layer.kind == LayerKind::Floating)
+    }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LayerView {
     pub kind: LayerKind,
+    /// Where the layer sits in its window. Always there for a floating
+    /// layer ([`SessionView::check_consistency`]); a tiled layer fills its
+    /// window.
+    #[serde(default)]
+    pub bounds: Option<Bounds>,
     /// `null` on a tiled layer whose blocks have all been floated.
     #[serde(default)]
     pub layout: Option<LayoutView>,
@@ -378,6 +424,33 @@ pub struct TerminalOptions {
     pub login: Option<bool>,
 }
 
+// ---- session.new_layer -----------------------------------------------------
+
+/// A floating layer to create, before the window it goes in is known.
+#[derive(Debug)]
+pub struct CreateFloatingLayer {
+    pub bounds: Bounds,
+    pub layout: CreateLayout,
+}
+
+/// `session.new_layer`: adds a floating layer at the front of a window,
+/// creating its blocks. All of them or none.
+#[derive(Debug, Serialize)]
+pub struct NewLayer<'a> {
+    pub session_id: &'a str,
+    pub window_id: &'a str,
+    pub bounds: Bounds,
+    pub layout: &'a CreateLayout,
+    /// Whether to make the window active and focus the layer's first block.
+    pub focus: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewLayerResult {
+    /// In depth-first, before-then-after order of the layer's layout.
+    pub block_ids: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreatedSession {
     pub session_id: String,
@@ -419,6 +492,37 @@ mod tests {
 
     fn is_program(foreground: ProcessInfo) -> bool {
         first_process(foreground).foreground_program().is_some()
+    }
+
+    #[test]
+    fn bounds_that_fit_are_sent_as_they_are() {
+        for bounds in [
+            [0.1, 0.2, 0.5, 0.3],
+            [0.0, 0.0, 1.0, 1.0],
+            [0.5, 0.5, 0.5, 0.5],
+        ] {
+            assert_eq!(Bounds(bounds).clamped(), Bounds(bounds));
+        }
+    }
+
+    #[test]
+    fn bounds_a_rounding_error_took_past_the_window_are_brought_inside_it() {
+        for bounds in [
+            [0.7, 0.1, 0.30000000000000004, 0.2],
+            [0.3, 0.0, 0.7000000000000001, 1.0000000000000002],
+            [-1e-12, 0.5, 0.5, 0.5000000000000002],
+        ] {
+            let Bounds([x, y, w, h]) = Bounds(bounds).clamped();
+            assert!(x >= 0.0 && y >= 0.0, "{bounds:?} -> {x}, {y}");
+            assert!(w > 0.0 && h > 0.0, "{bounds:?} -> {w}, {h}");
+            assert!(
+                x + w <= 1.0 && y + h <= 1.0,
+                "{bounds:?} -> {x}+{w}, {y}+{h}"
+            );
+            for (clamped, saved) in [x, y, w, h].into_iter().zip(bounds) {
+                assert!((clamped - saved).abs() < 1e-9, "{bounds:?} moved too far");
+            }
+        }
     }
 
     #[test]

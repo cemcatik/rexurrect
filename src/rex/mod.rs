@@ -34,8 +34,8 @@ use crate::error::{Error, Result};
 use crate::settings;
 
 use api::{
-    CreateSession, CreatedSession, FormatArgs, ServerStatus, SessionList, SessionSummary,
-    SessionView, TerminalFormat, TerminalProcess, TerminalPwd,
+    CreateSession, CreatedSession, FormatArgs, NewLayer, NewLayerResult, ServerStatus, SessionList,
+    SessionSummary, SessionView, TerminalFormat, TerminalProcess, TerminalPwd,
 };
 
 /// The variable naming the Rex server to talk to. Rex sets it in every
@@ -348,6 +348,12 @@ impl Rex {
 
     pub fn create_session(&self, request: &CreateSession) -> Result<CreatedSession, RexError> {
         self.call("session.create", request)
+    }
+
+    /// Adds a floating layer at the front of a window. Its blocks start
+    /// like those `session.create` starts.
+    pub fn new_layer(&self, request: &NewLayer) -> Result<NewLayerResult, RexError> {
+        self.call("session.new_layer", request)
     }
 
     /// Makes `window_id` the session's active window. Like
