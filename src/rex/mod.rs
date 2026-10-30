@@ -110,7 +110,14 @@ pub enum RexError {
     },
     /// `rex` succeeded but its output isn't the shape rexurrect expects.
     UnexpectedOutput { method: String, detail: String },
+    /// The `rex` at `program` failed, and it isn't Rex's CLI but (R)?ex, the
+    /// Perl automation tool Debian and Ubuntu also package as `rex`, which
+    /// can replace Rex's package.
+    PerlRex { method: String, program: PathBuf },
 }
+
+/// Rex's Linux installation docs, which say how to get Rex back from (R)?ex.
+const INSTALL_DOCS: &str = "https://www.superlogical.com/rex/docs/linux/installation#install";
 
 impl fmt::Display for RexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -144,6 +151,14 @@ impl fmt::Display for RexError {
                 write!(
                     f,
                     "rex api call {method} returned unexpected output: {detail}"
+                )
+            }
+            RexError::PerlRex { method, program } => {
+                write!(
+                    f,
+                    "rex api call {method} failed: {} is (R)?ex, the Perl automation tool \
+                     also packaged as `rex`, not Rex's CLI; to reinstall Rex, see {INSTALL_DOCS}",
+                    program.display()
                 )
             }
         }
@@ -190,6 +205,18 @@ fn rex_on_path() -> Option<PathBuf> {
 
 fn is_executable(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+/// Whether the `rex` at `program` is (R)?ex, judged as Rex's docs do: its
+/// `rex -v` prints `(R)?ex` (Rex's CLI prints its usage). Run only once a
+/// call through it has failed, to say why.
+fn is_perl_rex(program: &Path) -> bool {
+    Command::new(program)
+        .arg("-v")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .is_ok_and(|out| out.stdout.starts_with(b"(R)?ex"))
 }
 
 impl Rex {
@@ -280,6 +307,10 @@ impl Rex {
                 Some(4) => RexError::NotRunning {
                     method: method.to_string(),
                     message,
+                },
+                _ if is_perl_rex(&self.program) => RexError::PerlRex {
+                    method: method.to_string(),
+                    program: self.program.clone(),
                 },
                 status => RexError::Failed {
                     method: method.to_string(),

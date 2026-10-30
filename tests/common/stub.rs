@@ -1,5 +1,7 @@
 //! A stub `rex` for output a throwaway server doesn't produce: a changed
 //! beta API, or an answer that would take megabytes of output to provoke.
+//! Also `rex`es that aren't stubs of Rex's: a stand-in for (R)?ex, and one
+//! that records how it was run.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -8,6 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use serde_json::Value;
 
 use super::env::TestEnv;
+use super::scheduled::write_script;
 use super::server::rex_bin;
 
 /// A directory holding a stub `rex` script. Put it first on one run's
@@ -224,6 +227,53 @@ pub fn slow_rex(env: &TestEnv, method: &str, seconds: f64) -> PathBuf {
     std::fs::write(&rex, script).unwrap();
     std::fs::set_permissions(&rex, std::fs::Permissions::from_mode(0o755)).unwrap();
     dir
+}
+
+/// A directory holding a stand-in for (R)?ex, the Perl automation tool that
+/// Debian and Ubuntu also package as `rex`, as it behaves with no Rexfile
+/// around: `rex -v` prints its version, and anything else (an `api call`)
+/// prints its Rexfile warnings on stderr and exits 1.
+pub fn perl_rex(env: &TestEnv) -> PathBuf {
+    let dir = env.mkdir("perl-rex");
+    let script = r#"#!/bin/sh
+if [ "$1" = -v ]; then echo '(R)?ex 1.8.1'; exit 0; fi
+echo '[2026-10-28 06:23:04] WARN - No Rexfile found.' >&2
+echo "[2026-10-28 06:23:04] ERROR - No task named 'api' found." >&2
+exit 1
+"#;
+    write_script(&dir.join("rex"), script);
+    dir
+}
+
+/// A directory holding a `rex` that records each run's arguments, then
+/// runs the real `rex`. Put it first on one run's `PATH` with
+/// `path_prepend(recording.dir())`.
+pub struct RecordingRex {
+    dir: PathBuf,
+}
+
+impl RecordingRex {
+    pub fn new(env: &TestEnv) -> RecordingRex {
+        let dir = env.mkdir("recording-rex");
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> {}\nexec {} \"$@\"\n",
+            sh_quote(&dir.join("runs")),
+            sh_quote(rex_bin())
+        );
+        write_script(&dir.join("rex"), &script);
+        RecordingRex { dir }
+    }
+
+    /// The directory to put first on `PATH`.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Each run's arguments so far, one run per item, oldest first.
+    pub fn runs(&self) -> Vec<String> {
+        let runs = std::fs::read_to_string(self.dir.join("runs")).unwrap_or_default();
+        runs.lines().map(str::to_string).collect()
+    }
 }
 
 /// `path` as one single-quoted shell word.

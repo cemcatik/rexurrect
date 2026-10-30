@@ -755,6 +755,35 @@ which is where the login server's per-account server listens. With no `rex` on `
 `--tarball` install in `/usr/local/bin`, or the autosave timer), it runs the `rex` your
 running server runs, read from `/proc/<pid>/exe` (see [Which server](#which-server)).
 
+### When `rex` is (R)?ex
+
+Debian and Ubuntu ship an unrelated package also named `rex`: (R)?ex, a Perl automation tool.
+Rex's installer pins its own repository above it, but `unattended-upgrade` ignores that pin
+(Rex's repository isn't one of its allowed origins), so on a machine with unattended upgrades
+and universe enabled it can replace Rex with (R)?ex as an ordinary upgrade. Servers already
+running keep working, but every `save` and `restore`, autosave's included, then fails, naming
+the `rex` it ran as (R)?ex, not Rex's CLI.
+
+To get Rex back, run Rex's install script again, as
+[Rex's installation docs](https://www.superlogical.com/rex/docs/linux/installation#install) say.
+Or, with apt alone, name Rex's version, since apt now sees (R)?ex as the newer one:
+`sudo apt-get install --allow-downgrades rex=<version>`, with a version `apt-cache madison rex`
+lists from Rex's repository. To keep it from happening again, have `unattended-upgrade` leave the
+`rex` package alone, in a file of its own such as `/etc/apt/apt.conf.d/51rex`:
+
+```text
+Unattended-Upgrade::Package-Blacklist { "rex$"; };
+```
+
+Entries are regular expressions matched from the start of a package's name, so without the `$`
+it would leave every package whose name starts with `rex` alone too. This costs nothing:
+`unattended-upgrade` never installed Rex's own updates, and `apt upgrade` still follows Rex's pin.
+
+Other distributions may package (R)?ex, or some other tool, as `rex` too, and their automatic
+updates may swap it in the same way. rexurrect recognises (R)?ex wherever it comes from, by what
+`rex -v` prints. Any other tool named `rex` just fails with its own error, so if `save` fails
+with output that doesn't look like Rex's, check what `rex -v` prints.
+
 ### Autosave on Linux
 
 `autosave install` writes two systemd user units to `$XDG_CONFIG_HOME/systemd/user` (else

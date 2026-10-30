@@ -44,7 +44,9 @@
 //! - stub `rex`: [`RexStub`], put first on one run's `PATH` with
 //!   `env.rexurrect(&server).path_prepend(stub.dir())` (the harness itself
 //!   always uses the real `rex`, see [`server::rex_bin`]); a slow one:
-//!   [`stub::slow_rex`]. Auto-restore runs the `rex` its server runs, not
+//!   [`stub::slow_rex`]; a stand-in for (R)?ex, the Perl tool also packaged
+//!   as `rex`: [`perl_rex`]; one that records its arguments:
+//!   [`RecordingRex`]. Auto-restore runs the `rex` its server runs, not
 //!   the one on `PATH`: start that server with
 //!   `.shown_as(stub.dir().join("rex"))`.
 //! - an executable to copy, rename or run through a symlink:
@@ -83,4 +85,4 @@ pub use stand_in::{
     build_stand_in, report, restarted, restarted_after, restored_with_typed, run_and_wait, running,
     runs, stand_in_bin, wait_for_runs, write_session_vim,
 };
-pub use stub::RexStub;
+pub use stub::{RecordingRex, RexStub, perl_rex};
