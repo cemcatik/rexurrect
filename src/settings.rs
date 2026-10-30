@@ -4,6 +4,10 @@
 use std::ffi::OsString;
 use std::num::NonZeroU64;
 
+/// The variable Rex sets in each block's shell, and so in every program it
+/// runs: the block's ID.
+pub const BLOCK_VAR: &str = "REX_BLOCK";
+
 /// The environment variable `name`, unless it's unset or empty: an empty
 /// variable counts as unset.
 pub fn env_non_empty(name: &str) -> Option<OsString> {

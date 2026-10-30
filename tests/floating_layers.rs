@@ -252,7 +252,8 @@ fn a_floating_layer_that_cant_be_created_leaves_the_session_created_with_a_note(
         "{out}"
     );
     assert!(
-        out.stdout.contains("1 created, 0 skipped, 0 failed"),
+        out.stdout
+            .contains("1 created, 0 replaced, 0 skipped, 0 failed"),
         "{out}"
     );
     let assert_only_the_kept_layer = |restored: &str| {

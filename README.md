@@ -191,19 +191,51 @@ rexurrect list      # list the snapshots, newest first
     ratio must be between 0 and 1), `save` writes nothing, exits non-zero and says what didn't
     match.
 - **`restore`** recreates each saved session from the latest snapshot, unless that session is
-  already live, and prints what it `created`, `skipped` and why anything `failed`. One session
-  failing doesn't stop the others; `restore` exits non-zero if any failed. Running it twice
-  creates no duplicates. Options, which combine:
+  already live, and prints what it `created`, `replaced`, `skipped` and why anything `failed`.
+  One session failing doesn't stop the others; `restore` exits non-zero if any failed. Running it
+  twice creates no duplicates. Options, which combine:
   - `--snapshot <id>` restores from an older snapshot, using an ID from `list`;
   - `--session <label>` restores only the saved sessions with that label (all of them, if
     several share it), and fails if the snapshot has none;
-  - `--dry-run` (`-n`) prints what would be created and skipped, and creates nothing.
+  - `--dry-run` (`-n`) prints what would be created and skipped, and creates nothing;
+  - `--force` replaces each saved session that's live instead of skipping it: see
+    [When Rex restores sessions itself](#when-rex-restores-sessions-itself).
 - **`list`** shows each snapshot's ID, when it was taken (UTC) and its session labels, newest
   first.
 
 Whatever the snapshot, restore skips a saved session that's still live, even if it has changed
 since, so restoring an older snapshot never brings back an older copy of a session you still
-have. Kill the live one first if that's what you want.
+have. Kill the live one first, or use `--force`, if that's what you want.
+
+### When Rex restores sessions itself
+
+Newer Rex builds bring a server's sessions back by themselves when it starts, with their windows
+and layouts but without their scrollback or the programs that ran in them. rexurrect would see
+each as still live and skip it, so it **replaces** them instead: it creates the saved session
+from the snapshot, exactly as any restore does (scrollback, resumed programs and all), and only
+then closes Rex's copy. If creating it fails, Rex's copy stays. Replaced sessions get new
+session and block IDs, as every restored session does. See
+[ADR-0008](docs/adr/0008-replace-sessions-rex-carried-over.md).
+
+- **Auto-restore** replaces them at the server's start, with no setting: the copies you see in
+  the Rex app for the first few seconds are closed then, so anything you type into one before
+  that is lost. On a `rex config reload` it never replaces anything.
+- **`restore --force`** does the same by hand, for every saved session that's live, whether Rex
+  brought it back or not. It combines with `--snapshot`, `--session` (only that label's sessions
+  are replaced) and `--dry-run` (it prints `would replace` lines and changes nothing). It prints
+  `replaced  <label>  <new session>  (closed <old session>)` for each. Run from inside a session
+  it replaces, it closes that one last, once everything else is done and its report is in
+  `rexurrect.log`: the terminal you ran it in then disappears.
+- **A plain `restore`** still skips them, and says so: `skipped  <label>  (carried over by Rex;
+  --force replaces it)`. It doesn't count as restoring the server, so the next save doesn't
+  either (next point).
+- **`save`** on a freshly started server that still holds Rex's copies saves nothing: it leaves
+  `latest.json` alone, exits non-zero and logs that the sessions need replacing, so an autosave
+  never replaces your latest snapshot with copies that have lost their scrollback. Autosaves pause
+  that way, logging each time, until auto-restore or `restore --force` has replaced them.
+
+rexurrect knows Rex's copy of a session by its blocks: Rex keeps their IDs, so a live block
+that's in a snapshot taken before the server started can only have been brought back by Rex.
 
 A block that can't come back as it was still comes back as a shell, so the layout around it
 stays intact. A block whose directory no longer exists opens in your home directory. A block
@@ -276,7 +308,9 @@ retention removes the snapshot itself.
 After a server restart, the first `save` restores before it saves, unless a `restore` already
 ran on that server. A save that runs on a freshly started server (an autosave, say) therefore
 can't replace your latest snapshot with a near-empty one. A save on a server already restored
-into never restores again, even if you've killed restored sessions since. A `--dry-run` or
+into never restores again, even if you've killed restored sessions since. On a server that still
+holds sessions Rex brought back itself, it neither restores nor saves (see
+[When Rex restores sessions itself](#when-rex-restores-sessions-itself)). A `--dry-run` or
 `--session` restore doesn't count, because it leaves sessions out: a save after it would replace
 your latest snapshot without the other sessions. Restoring a whole older snapshot does count.
 Only one restore runs at a time, and a `save` that starts during a restore waits for it to
@@ -297,9 +331,10 @@ say so.
 
 Every failure of `save` or `restore`, including each session that fails to restore, is also
 appended to `rexurrect.log` in the state directory, one line per failure starting with a
-UTC timestamp. Successful runs write nothing there, with two exceptions: auto-restore logs every
-outcome (see [Auto-restore](#auto-restore)), and save logs each block whose scrollback it
-starts saving without because it's too large. Once the log passes 1 MB (an autosave failing
+UTC timestamp. Successful runs write nothing there, with three exceptions: auto-restore logs every
+outcome (see [Auto-restore](#auto-restore)), save logs each block whose scrollback it
+starts saving without because it's too large, and `restore --force` logs its report before it
+closes the session it runs in. Once the log passes 1 MB (an autosave failing
 every 15 minutes while Rex is quit gets it there in a few months), it keeps only its newest half.
 
 ### Which server
@@ -873,7 +908,10 @@ The server runs `init.lua` when it starts, and again on every `rex config reload
 until `init.lua` has finished, and carries on in the background:
 
 - It waits for the server to be ready, then restores the latest snapshot into it the way
-  `restore` does. Saved sessions whose lineage is live are skipped, so nothing is duplicated.
+  `restore` does. At the server's start, saved sessions that are live (the ones Rex brought back
+  itself, without their scrollback or programs) are replaced, as `restore --force` replaces them
+  (see [When Rex restores sessions itself](#when-rex-restores-sessions-itself)). On a config
+  reload they're skipped, so nothing is duplicated.
 - It restores once per server instance. On a config reload, or on a server that `restore` or a
   `save` already restored into (see [Usage](#usage)), it restores nothing, so sessions you killed
   stay gone. Adding the line and running `rex config reload` restores into the running server
@@ -883,8 +921,9 @@ until `init.lua` has finished, and carries on in the background:
   process's command line, uses it only once the server there reports the right process ID, and
   then names it explicitly in every call. It runs the `rex` that the server itself runs.
 - It's silent. Its output is discarded, and each run adds one line to `rexurrect.log` saying
-  which server it restored into and what it created and skipped, and the app session it closed
-  (next point), that there was nothing to do, or why it gave up, plus a line for each failure.
+  which server it restored into and what it created, replaced and skipped, and the app session
+  it closed (next point), that there was nothing to do, or why it gave up, plus a line for each
+  failure.
   A run that created sessions adds its line once it stops looking for the app session, up to
   30 seconds after restoring. If the server isn't ready within 60 seconds, it gives up and
   logs that. Set `ready_timeout` (seconds) in the [config file](#settings) to wait longer. A
@@ -901,7 +940,7 @@ until `init.lua` has finished, and carries on in the background:
   doesn't turn up first, yours is closed instead; nothing in it was worth restoring. An app
   session that turns up after the 30 seconds is left alone, and while it's untouched `save`
   never saves it. Only auto-restore closes it: `restore` and the restore a `save` runs first
-  never close a session. See
+  never close an app session. See
   [ADR-0004](docs/adr/0004-close-the-app-session-after-auto-restore.md).
 
 `rex config check` runs `init.lua` too. There auto-restore says it wasn't started by a Rex server

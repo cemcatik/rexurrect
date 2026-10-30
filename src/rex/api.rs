@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::timestamp::Timestamp;
+
 /// The terminal shell block flavor, today the only one Rex has.
 pub const SHELL_FLAVOR: &str = "com.superlogical.terminal.shell";
 
@@ -55,6 +57,16 @@ pub struct ServerStatus {
     pub instance_id: String,
     /// The local server's host; equals the `host_id` of every local block.
     pub host_id: String,
+    /// When this server instance started.
+    pub started_at: Timestamp,
+    pub config: ServerConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ServerConfig {
+    /// How many times the server has run init.lua: 1 from its start, one
+    /// more for each `rex config reload`.
+    pub generation: u64,
 }
 
 // ---- session.list ----------------------------------------------------------
@@ -85,6 +97,15 @@ pub struct SessionView {
 }
 
 impl SessionView {
+    /// The ID of every block in the session, in every layer of every window.
+    pub fn block_ids(&self) -> impl Iterator<Item = &str> {
+        self.windows
+            .iter()
+            .flat_map(|window| &window.layers)
+            .flat_map(|layer| &layer.blocks)
+            .map(|block| block.block_id.as_str())
+    }
+
     /// Cross-checks the keys Rex omits instead of sending them empty, so a
     /// renamed key can't pass for an empty value (and the session for one
     /// with nothing to save):

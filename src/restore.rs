@@ -1,7 +1,8 @@
 //! `rexurrect restore`: recreate a snapshot's sessions, the latest by default.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::account;
@@ -12,19 +13,20 @@ use crate::error::{Context, Error, Result};
 use crate::exited;
 use crate::instance::RestoreLock;
 use crate::lineage::{Lineage, LineageMap};
-use crate::log;
+use crate::log::{self, Log};
 use crate::recorder::RecorderFiles;
 use crate::resume::{Input, Resuming};
 use crate::rex::Rex;
 use crate::rex::api::{CreateFloatingLayer, CreatedSession, NewLayer, ServerStatus};
 use crate::scrollback::Replay;
+use crate::settings::{self, BLOCK_VAR};
 use crate::snapshot::{SavedSession, Snapshot};
 use crate::startup::StartingSessions;
 use crate::state::StateDir;
 use crate::store::SnapshotStore;
 use crate::timestamp::Timestamp;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RestoreOptions {
     /// Restore from this snapshot (an identifier `list` shows) instead of the latest.
     pub snapshot: Option<String>,
@@ -32,6 +34,12 @@ pub struct RestoreOptions {
     pub session: Option<String>,
     /// Print what would be created and skipped, and create nothing.
     pub dry_run: bool,
+    /// Replace each saved session's live session instead of skipping it
+    /// (ADR-0008): create the saved session, then close the live one.
+    pub force: bool,
+    /// The block this restore runs in (`REX_BLOCK`). With `force`, the
+    /// session holding it is closed last, once the restore has finished.
+    pub own_block: Option<String>,
 }
 
 impl RestoreOptions {
@@ -59,12 +67,31 @@ pub enum Outcome {
         /// count as failing: it's still restored.
         note: Option<String>,
     },
+    /// Created in place of a live session of its lineage, which restore
+    /// then closed (a replaced session, ADR-0008).
+    Replaced {
+        label: String,
+        session_id: String,
+        /// The live session it replaced.
+        closed_session_id: String,
+        closed: Closed,
+        /// As for [`Outcome::Created`].
+        note: Option<String>,
+    },
     /// A dry run would create it.
     WouldCreate { label: String },
+    /// A dry run with `force` would replace this live session with it.
+    WouldReplace {
+        label: String,
+        live_session_id: String,
+    },
     /// A session of its lineage is already live.
     Skipped {
         label: String,
         live_session_id: String,
+        /// Rex carried the live session over (ADR-0008): it holds a block
+        /// of a snapshot taken before this server instance started.
+        carried_over: bool,
     },
     Failed {
         label: String,
@@ -73,6 +100,17 @@ pub enum Outcome {
         /// far. Its lineage is recorded, so no restore creates it again.
         session_id: Option<String>,
     },
+}
+
+/// Whether the live session that an [`Outcome::Replaced`] replaced was closed.
+#[derive(Debug)]
+pub enum Closed {
+    Yes,
+    /// Rex refused, so both are live: too small to count as failing.
+    Failed(String),
+    /// It holds the block this restore runs in, so it's closed last, once
+    /// the restore has finished (see [`RestoreReport::close_last`]).
+    Last,
 }
 
 #[derive(Debug, Default)]
@@ -107,24 +145,58 @@ impl RestoreReport {
     /// it doesn't count as restoring the server instance, and a save after
     /// it mustn't replace the latest snapshot.
     pub fn every_attempt_failed(&self) -> bool {
-        let attempted =
-            self.count(|o| matches!(o, Outcome::Created { .. } | Outcome::Failed { .. }));
+        let attempted = self.count(|o| {
+            matches!(
+                o,
+                Outcome::Created { .. } | Outcome::Replaced { .. } | Outcome::Failed { .. }
+            )
+        });
         attempted > 0 && !self.created_a_session()
     }
 
     /// Whether restore created at least one session, counting one that
-    /// failed after it was created. Only then does auto-restore look for the
-    /// app session.
+    /// replaced a live one and one that failed after it was created. Only
+    /// then does auto-restore look for the app session.
     pub fn created_a_session(&self) -> bool {
         self.outcomes.iter().any(|o| {
             matches!(
                 o,
                 Outcome::Created { .. }
+                    | Outcome::Replaced { .. }
                     | Outcome::Failed {
                         session_id: Some(_),
                         ..
                     }
             )
+        })
+    }
+
+    /// Whether restore skipped a session Rex carried over. Rex's copy is
+    /// still live, without its scrollback or programs, so such a restore
+    /// doesn't count as restoring the server instance: a save after it
+    /// backs off rather than replace the latest snapshot with the copy.
+    fn skipped_a_carried_over_session(&self) -> bool {
+        self.outcomes.iter().any(|o| {
+            matches!(
+                o,
+                Outcome::Skipped {
+                    carried_over: true,
+                    ..
+                }
+            )
+        })
+    }
+
+    /// The live session to close once the restore has finished: the one
+    /// that holds the block it runs in, which it replaced.
+    pub fn close_last(&self) -> Option<&str> {
+        self.outcomes.iter().find_map(|o| match o {
+            Outcome::Replaced {
+                closed_session_id,
+                closed: Closed::Last,
+                ..
+            } => Some(closed_session_id.as_str()),
+            _ => None,
         })
     }
 
@@ -155,27 +227,63 @@ impl RestoreReport {
                     Some(note) => writeln!(out, "created  {label}  {session_id}  ({note})")?,
                     None => writeln!(out, "created  {label}  {session_id}")?,
                 },
+                Outcome::Replaced {
+                    label,
+                    session_id,
+                    closed_session_id,
+                    closed,
+                    note,
+                } => {
+                    let mut notes = vec![match closed {
+                        Closed::Yes => format!("closed {closed_session_id}"),
+                        Closed::Failed(e) => format!("couldn't close {closed_session_id}: {e}"),
+                        Closed::Last => {
+                            format!("closing {closed_session_id} last: this restore runs in it")
+                        }
+                    }];
+                    notes.extend(note.clone());
+                    writeln!(
+                        out,
+                        "replaced  {label}  {session_id}  ({})",
+                        notes.join("; ")
+                    )?
+                }
                 Outcome::WouldCreate { label } => writeln!(out, "would create  {label}")?,
+                Outcome::WouldReplace {
+                    label,
+                    live_session_id,
+                } => writeln!(out, "would replace  {label}  (live as {live_session_id})")?,
+                Outcome::Skipped {
+                    label,
+                    carried_over: true,
+                    ..
+                } => writeln!(
+                    out,
+                    "skipped  {label}  (carried over by Rex; --force replaces it)"
+                )?,
                 Outcome::Skipped {
                     label,
                     live_session_id,
+                    ..
                 } => writeln!(out, "skipped  {label}  (live as {live_session_id})")?,
                 Outcome::Failed { label, error, .. } => writeln!(out, "failed   {label}: {error}")?,
             }
         }
+        let skipped = self.count(|o| matches!(o, Outcome::Skipped { .. }));
         if self.dry_run {
             return writeln!(
                 out,
-                "dry run: {} would be created, {} skipped; nothing was changed",
+                "dry run: {} would be created, {} would be replaced, {skipped} skipped; nothing \
+                 was changed",
                 self.count(|o| matches!(o, Outcome::WouldCreate { .. })),
-                self.count(|o| matches!(o, Outcome::Skipped { .. })),
+                self.count(|o| matches!(o, Outcome::WouldReplace { .. })),
             );
         }
         writeln!(
             out,
-            "restore: {} created, {} skipped, {} failed",
+            "restore: {} created, {} replaced, {skipped} skipped, {} failed",
             self.count(|o| matches!(o, Outcome::Created { .. })),
-            self.count(|o| matches!(o, Outcome::Skipped { .. })),
+            self.count(|o| matches!(o, Outcome::Replaced { .. })),
             self.failed(),
         )
     }
@@ -187,8 +295,30 @@ pub fn run(options: &RestoreOptions) -> Result<ExitCode> {
     let lock = RestoreLock::acquire(&state)?;
     let rex = Rex::from_env()?;
     let server = rex.server_status()?;
-    let report = restore(&rex, &state, &lock, &server, &config, options)?;
-    Ok(report.finish(&state, "restore", &mut std::io::stdout().lock()))
+    let options = RestoreOptions {
+        own_block: settings::env_non_empty(BLOCK_VAR).map(|id| id.to_string_lossy().into_owned()),
+        ..options.clone()
+    };
+    let report = restore(&rex, &state, &lock, &server, &config, &options)?;
+    let mut printed = Vec::new();
+    let status = report.finish(&state, "restore", &mut printed);
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(&printed).and_then(|()| out.flush());
+    if let Some(session_id) = report.close_last() {
+        // Closing it closes the terminal this run prints to, and may end
+        // the run: everything is recorded by now, and the log keeps the
+        // report.
+        Log::new(&state).append(&format!(
+            "restore --force, before closing {session_id}, the session it ran in: {}",
+            String::from_utf8_lossy(&printed)
+        ))?;
+        if let Err(e) = rex.destroy_session(session_id) {
+            let message = format!("couldn't close {session_id}, the session it ran in: {e}");
+            eprintln!("rexurrect: {message}");
+            Log::new(&state).append(&format!("restore --force {message}"))?;
+        }
+    }
+    Ok(status)
 }
 
 /// Restores into the server's current instance, the one `server` (its
@@ -201,17 +331,19 @@ pub fn restore_unrestored_instance(
     lock: &RestoreLock,
     server: &ServerStatus,
     config: &Config,
+    options: &RestoreOptions,
 ) -> Result<Option<RestoreReport>> {
     if lock.is_restored(&server.instance_id)? {
         return Ok(None);
     }
-    restore(rex, state, lock, server, config, &RestoreOptions::default()).map(Some)
+    restore(rex, state, lock, server, config, options).map(Some)
 }
 
 /// Restores a snapshot and, once that has finished, records the server
 /// instance it restored into (`server`'s), unless `options` restore less
-/// than a whole snapshot or every session it tried to create failed.
-/// Sessions that failed don't stop it from finishing.
+/// than a whole snapshot, every session it tried to create failed, or it
+/// skipped a session Rex carried over. Sessions that failed don't stop it
+/// from finishing.
 pub fn restore(
     rex: &Rex,
     state: &StateDir,
@@ -220,24 +352,104 @@ pub fn restore(
     config: &Config,
     options: &RestoreOptions,
 ) -> Result<RestoreReport> {
-    let report = restore_sessions(rex, state, config, options)?;
-    if options.restores_whole_snapshot() && !report.every_attempt_failed() {
+    let report = restore_sessions(rex, state, server, config, options)?;
+    if options.restores_whole_snapshot()
+        && !report.every_attempt_failed()
+        && !report.skipped_a_carried_over_session()
+    {
         lock.record_restored(&server.instance_id)?;
     }
     Ok(report)
 }
 
-/// Creates each saved session whose lineage has no live session (ADR-0001)
-/// and records the new session's lineage, what it was created with for
-/// saves in its startup window (see `startup`), and what it typed at its
-/// blocks' prompts (see `resume`) as their default last commands for saves
-/// after that (see `defaults`); a dry run only
-/// reports what it would create. A session that fails, to create or to have
-/// its blocks told apart, doesn't stop the others; errors that stop the
-/// whole restore (no server, unreadable or unwritable state) are returned.
+/// Whether the server instance `server` describes holds a session Rex
+/// carried over from the latest snapshot (see [`carried_over_sessions`]).
+pub fn holds_carried_over_session(
+    rex: &Rex,
+    state: &StateDir,
+    server: &ServerStatus,
+) -> Result<bool> {
+    let Some((_, snapshot)) = SnapshotStore::new(state).read_latest()? else {
+        return Ok(false);
+    };
+    let live = rex.list_sessions()?;
+    let carried_over = carried_over_sessions(
+        rex,
+        &snapshot,
+        server,
+        live.iter().map(|s| s.session_id.as_str()),
+    )?;
+    Ok(!carried_over.is_empty())
+}
+
+/// Whether `snapshot` was taken before the server instance `server`
+/// describes started: in an earlier one.
+fn taken_in_an_earlier_instance(snapshot: &Snapshot, server: &ServerStatus) -> bool {
+    snapshot.taken_at < server.started_at
+}
+
+/// Those of the live sessions `session_ids` that Rex carried over into the
+/// server instance `server` describes (ADR-0008): each holds a block that's
+/// also in `snapshot`, taken before the instance started. Block IDs are
+/// never reused, so only Rex's own restore brings one into a later
+/// instance. Looks at none of them when `snapshot` was taken in this one.
+fn carried_over_sessions<'a>(
+    rex: &Rex,
+    snapshot: &Snapshot,
+    server: &ServerStatus,
+    session_ids: impl IntoIterator<Item = &'a str>,
+) -> Result<HashSet<String>> {
+    if !taken_in_an_earlier_instance(snapshot, server) {
+        return Ok(HashSet::new());
+    }
+    let saved: HashSet<&str> = snapshot
+        .sessions
+        .iter()
+        .flat_map(SavedSession::blocks)
+        .filter_map(|block| block.block_id.as_deref())
+        .collect();
+    let mut carried_over = HashSet::new();
+    if saved.is_empty() {
+        return Ok(carried_over);
+    }
+    for session_id in session_ids {
+        let view = rex
+            .view_session(session_id)
+            .with_context(|| format!("looking for sessions Rex carried over: {session_id}"))?;
+        if view.block_ids().any(|block_id| saved.contains(block_id)) {
+            carried_over.insert(session_id.to_string());
+        }
+    }
+    Ok(carried_over)
+}
+
+/// The one of the live sessions `session_ids` that holds the block `block_id`.
+fn session_holding<'a>(
+    rex: &Rex,
+    block_id: &str,
+    session_ids: impl IntoIterator<Item = &'a str>,
+) -> Result<Option<String>> {
+    for session_id in session_ids {
+        let view = rex.view_session(session_id).with_context(|| {
+            format!("looking for the session this restore runs in: {session_id}")
+        })?;
+        if view.block_ids().any(|id| id == block_id) {
+            return Ok(Some(session_id.to_string()));
+        }
+    }
+    Ok(None)
+}
+
+/// Creates each saved session whose lineage has no live session (ADR-0001),
+/// or, with `force`, replaces the live one; see [`Creating::create`]. A dry
+/// run only reports what it would create and replace. A session that fails,
+/// to create or to have its blocks told apart, doesn't stop the others;
+/// errors that stop the whole restore (no server, unreadable or unwritable
+/// state) are returned.
 fn restore_sessions(
     rex: &Rex,
     state: &StateDir,
+    server: &ServerStatus,
     config: &Config,
     options: &RestoreOptions,
 ) -> Result<RestoreReport> {
@@ -245,21 +457,49 @@ fn restore_sessions(
         return Ok(RestoreReport::default());
     };
     let selected = selected_sessions(&snapshot, options)?;
-    let home = account::home()?;
     let live_sessions = rex.list_sessions()?;
     let mut lineages = LineageMap::load(state)?;
     let mut live: HashMap<Lineage, String> = live_sessions
         .iter()
         .map(|s| (lineages.lineage_of(&s.session_id), s.session_id.clone()))
         .collect();
+    // The live sessions of the selected saved sessions' lineages: the ones
+    // restore skips, or with `force` replaces.
+    let matched: Vec<String> = selected
+        .iter()
+        .filter_map(|saved| live.get(&saved.lineage).cloned())
+        .collect();
+    let matched = || matched.iter().map(String::as_str);
+    let (carried_over, own_session) = if options.force {
+        let own_session = match &options.own_block {
+            Some(block_id) if !options.dry_run => session_holding(rex, block_id, matched())?,
+            _ => None,
+        };
+        (HashSet::new(), own_session)
+    } else {
+        (
+            carried_over_sessions(rex, &snapshot, server, matched())?,
+            None,
+        )
+    };
     let is_live = |id: &str| live_sessions.iter().any(|s| s.session_id == id);
     lineages.retain_live(is_live);
     let mut starting = StartingSessions::load(state)?;
     starting.retain(Timestamp::now(), is_live);
-    let mut defaults = DefaultCommands::load(state)?;
-    let replay = Replay::new(state);
-    let mut resuming = Resuming::new(&config.programs, &config.auto_resume);
-    let recorder = RecorderFiles::new(state);
+    let mut creating = Creating {
+        rex,
+        home: account::home()?,
+        snapshot_id: &snapshot_id,
+        // A block of an earlier instance's snapshot that's live in this one
+        // is carried over, and its record rewritten by Rex's new shell.
+        exited_before: taken_in_an_earlier_instance(&snapshot, server).then_some(server.started_at),
+        lineages,
+        starting,
+        defaults: DefaultCommands::load(state)?,
+        replay: Replay::new(state),
+        resuming: Resuming::new(&config.programs, &config.auto_resume),
+        recorder: RecorderFiles::new(state),
+    };
 
     let mut report = RestoreReport {
         snapshot: Some(snapshot_id.clone()),
@@ -268,47 +508,131 @@ fn restore_sessions(
     };
     for saved in selected {
         let label = saved.label.clone();
-        if let Some(live_session_id) = live.get(&saved.lineage) {
-            report.outcomes.push(Outcome::Skipped {
-                label,
-                live_session_id: live_session_id.clone(),
-            });
-            continue;
-        }
-        if options.dry_run {
-            report.outcomes.push(Outcome::WouldCreate { label });
-            continue;
-        }
-        let saved = exited::without_exited_programs(saved, &recorder);
-        let mut as_created = create::as_created(&saved, &home, &replay);
-        let mut inputs: Vec<Option<Input>> =
-            as_created.blocks().map(|b| resuming.input(b)).collect();
-        let keystrokes: Vec<Option<String>> = inputs
-            .iter()
-            .map(|input| input.as_ref().map(Input::keystrokes))
-            .collect();
-        let requests = create::create_requests(&as_created, &keystrokes, &replay);
-        let created = match rex.create_session(&requests.session) {
-            Ok(created) => created,
-            Err(e) => {
-                report.outcomes.push(Outcome::Failed {
+        let replacing = match live.get(&saved.lineage) {
+            None => None,
+            Some(live_session_id) if options.force => Some(live_session_id.clone()),
+            Some(live_session_id) => {
+                report.outcomes.push(Outcome::Skipped {
                     label,
-                    error: e.to_string(),
-                    session_id: None,
+                    carried_over: carried_over.contains(live_session_id),
+                    live_session_id: live_session_id.clone(),
                 });
                 continue;
             }
         };
+        if options.dry_run {
+            report.outcomes.push(match replacing {
+                Some(live_session_id) => Outcome::WouldReplace {
+                    label,
+                    live_session_id,
+                },
+                None => Outcome::WouldCreate { label },
+            });
+            continue;
+        }
+        let (outcome, created) = creating.create(saved)?;
+        if let Some(session_id) = created {
+            live.insert(saved.lineage.clone(), session_id);
+        }
+        report.outcomes.push(match replacing {
+            Some(live_session_id) => {
+                let last = own_session.as_deref() == Some(live_session_id.as_str());
+                replaced(rex, outcome, live_session_id, last)
+            }
+            None => outcome,
+        });
+    }
+    Ok(report)
+}
+
+/// `outcome`, the creation of a saved session in place of the live session
+/// `live_session_id` of its lineage, as a replacement once that's closed,
+/// unless it's to be closed `last`. If creating it failed, the live session
+/// is left as it is, and so is `outcome`.
+fn replaced(rex: &Rex, outcome: Outcome, live_session_id: String, last: bool) -> Outcome {
+    let Outcome::Created {
+        label,
+        session_id,
+        note,
+    } = outcome
+    else {
+        return outcome;
+    };
+    let closed = if last {
+        Closed::Last
+    } else {
+        match rex.destroy_session(&live_session_id) {
+            Ok(()) => Closed::Yes,
+            Err(e) => Closed::Failed(e.to_string()),
+        }
+    };
+    Outcome::Replaced {
+        label,
+        session_id,
+        closed_session_id: live_session_id,
+        closed,
+        note,
+    }
+}
+
+/// What creating saved sessions needs, for one restore.
+struct Creating<'a> {
+    rex: &'a Rex,
+    home: PathBuf,
+    snapshot_id: &'a str,
+    /// Records written from then on say nothing about a program exiting
+    /// (see `exited`).
+    exited_before: Option<Timestamp>,
+    lineages: LineageMap,
+    starting: StartingSessions,
+    defaults: DefaultCommands,
+    replay: Replay,
+    resuming: Resuming<'a>,
+    recorder: RecorderFiles,
+}
+
+impl Creating<'_> {
+    /// Creates `saved` and records the new session's lineage, what it was
+    /// created with for saves in its startup window (see `startup`), and
+    /// what it typed at its blocks' prompts (see `resume`) as their default
+    /// last commands for saves after that (see `defaults`). Returns its
+    /// outcome, [`Outcome::Created`] or [`Outcome::Failed`], and the new
+    /// session's ID if it got that far.
+    fn create(&mut self, saved: &SavedSession) -> Result<(Outcome, Option<String>)> {
+        let rex = self.rex;
+        let label = saved.label.clone();
+        let saved = exited::without_exited_programs(saved, &self.recorder, self.exited_before);
+        let mut as_created = create::as_created(&saved, &self.home, &self.replay);
+        let mut inputs: Vec<Option<Input>> = as_created
+            .blocks()
+            .map(|b| self.resuming.input(b))
+            .collect();
+        let keystrokes: Vec<Option<String>> = inputs
+            .iter()
+            .map(|input| input.as_ref().map(Input::keystrokes))
+            .collect();
+        let requests = create::create_requests(&as_created, &keystrokes, &self.replay);
+        let created = match rex.create_session(&requests.session) {
+            Ok(created) => created,
+            Err(e) => {
+                let failed = Outcome::Failed {
+                    label,
+                    error: e.to_string(),
+                    session_id: None,
+                };
+                return Ok((failed, None));
+            }
+        };
         // The session exists from here on, whatever else fails: record its
         // lineage first, so no restore creates it again.
-        lineages.record(&created.session_id, saved.lineage.clone());
-        lineages.save().with_context(|| {
+        self.lineages
+            .record(&created.session_id, saved.lineage.clone());
+        self.lineages.save().with_context(|| {
             format!(
                 "recording the lineage of restored session {}",
                 created.session_id
             )
         })?;
-        live.insert(saved.lineage.clone(), created.session_id.clone());
         // A layer that can't be created leaves the session restored without
         // it: a note, as below.
         let mut notes = Vec::new();
@@ -336,21 +660,22 @@ fn restore_sessions(
             let mut changed = false;
             for (block_id, input) in block_ids.iter().zip(&inputs) {
                 if let Some(input) = input {
-                    changed |= defaults.set(block_id, input.command());
+                    changed |= self.defaults.set(block_id, input.command());
                 }
             }
             if changed {
-                defaults.save().with_context(recording)?;
+                self.defaults.save().with_context(recording)?;
             }
         }
-        starting.record(
+        self.starting.record(
             &created.session_id,
-            &snapshot_id,
+            self.snapshot_id,
             as_created,
             block_ids.as_ref().ok().cloned(),
         );
-        starting.save().with_context(recording)?;
-        report.outcomes.push(match block_ids {
+        self.starting.save().with_context(recording)?;
+        let session_id = created.session_id.clone();
+        let outcome = match block_ids {
             Ok(_) => Outcome::Created {
                 label,
                 session_id: created.session_id,
@@ -367,9 +692,9 @@ fn restore_sessions(
                 ),
                 session_id: Some(created.session_id),
             },
-        });
+        };
+        Ok((outcome, Some(session_id)))
     }
-    Ok(report)
 }
 
 /// The snapshot to restore from, with its identifier: the one asked for,

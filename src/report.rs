@@ -28,12 +28,8 @@ use crate::foreground;
 use crate::log::Log;
 use crate::programs::{Hook, StateKind};
 use crate::resume_state::{Reported, ResumeStates};
-use crate::settings;
+use crate::settings::{self, BLOCK_VAR};
 use crate::state::{self, STATE_DIR_VAR, StateDir};
-
-/// The variable Rex sets in each block's shell, and so in every program it
-/// runs: the block's ID.
-const BLOCK_VAR: &str = "REX_BLOCK";
 
 /// The variable Codex sets for the commands its agent runs: its thread's
 /// ID. A Codex started by one of them inherits it.
