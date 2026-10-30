@@ -55,11 +55,12 @@ pub enum Outcome {
     Created {
         label: String,
         session_id: String,
+        /// Something that went wrong after it was created, too small to
+        /// count as failing: it's still restored.
+        note: Option<String>,
     },
     /// A dry run would create it.
-    WouldCreate {
-        label: String,
-    },
+    WouldCreate { label: String },
     /// A session of its lineage is already live.
     Skipped {
         label: String,
@@ -146,9 +147,14 @@ impl RestoreReport {
         }
         for outcome in &self.outcomes {
             match outcome {
-                Outcome::Created { label, session_id } => {
-                    writeln!(out, "created  {label}  {session_id}")?
-                }
+                Outcome::Created {
+                    label,
+                    session_id,
+                    note,
+                } => match note {
+                    Some(note) => writeln!(out, "created  {label}  {session_id}  ({note})")?,
+                    None => writeln!(out, "created  {label}  {session_id}")?,
+                },
                 Outcome::WouldCreate { label } => writeln!(out, "would create  {label}")?,
                 Outcome::Skipped {
                     label,
@@ -302,6 +308,14 @@ fn restore_sessions(
             )
         })?;
         live.insert(saved.lineage.clone(), created.session_id.clone());
+        // session.create leaves the last window active: open on the first.
+        let note = match created.initial_windows.as_slice() {
+            [first, _, ..] => rex
+                .focus_window(&created.session_id, &first.window_id)
+                .err()
+                .map(|e| format!("couldn't focus its first window: {e}")),
+            _ => None,
+        };
         // Restore no longer writes recorder files (#6 had it seed each new
         // block's with what it typed there, which kept the foreground
         // fallback from ever applying to a restored block): what it typed
@@ -335,13 +349,16 @@ fn restore_sessions(
             Ok(_) => Outcome::Created {
                 label,
                 session_id: created.session_id,
+                note,
             },
             Err(e) => Outcome::Failed {
                 label,
                 error: format!(
                     "created as {}, but its new blocks couldn't be told apart, so their last \
-                     commands won't carry forward: {e}",
-                    created.session_id
+                     commands won't carry forward: {e}{}",
+                    created.session_id,
+                    note.map(|note| format!("; it also {note}"))
+                        .unwrap_or_default()
                 ),
                 session_id: Some(created.session_id),
             },

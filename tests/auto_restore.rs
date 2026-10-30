@@ -139,6 +139,29 @@ fn a_server_whose_init_lua_has_the_hook_restores_the_latest_snapshot_when_it_sta
     assert!(entries[0].contains("1 created"), "{}", entries[0]);
 }
 
+/// Auto-restore creates sessions the way restore does, so a session with
+/// several windows opens on its first (#80).
+#[test]
+fn a_session_auto_restore_creates_with_several_windows_opens_on_its_first() {
+    let env = TestEnv::new();
+    let a = env.mkdir("a");
+    {
+        let before = env.start_server();
+        let wide = before.create_session("zz-wide", &[window(shell(&a)), window(shell(&a))]);
+        before.wait_for_pwds(&wide);
+        env.save(&before);
+    } // The server stops, as in a restart.
+
+    let after = env.server().init_lua(hook(&env)).start();
+    let entries = wait_for_auto_restores(&env, 1);
+
+    assert!(entries[0].contains("1 created"), "{}", entries[0]);
+    let session_id = after.the_session_labelled("zz-wide");
+    let windows = labels(&after.view(&session_id));
+    assert_eq!(windows.len(), 2);
+    assert_eq!(after.active_window(&session_id), windows[0].window_id);
+}
+
 #[test]
 fn the_hook_restores_into_the_server_running_it_even_when_rex_server_names_another() {
     let env = TestEnv::new();

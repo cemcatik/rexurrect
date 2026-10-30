@@ -388,6 +388,7 @@ pub struct CreatedSession {
 
 #[derive(Debug, Deserialize)]
 pub struct CreatedWindow {
+    pub window_id: String,
     /// In depth-first, before-then-after order of the window's layout.
     pub block_ids: Vec<String>,
 }

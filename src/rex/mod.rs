@@ -350,6 +350,16 @@ impl Rex {
         self.call("session.create", request)
     }
 
+    /// Makes `window_id` the session's active window. Like
+    /// `destroy_session`, no client needs to be attached.
+    pub fn focus_window(&self, session_id: &str, window_id: &str) -> Result<(), RexError> {
+        let _: IgnoredAny = self.call(
+            "session.focus_window",
+            &json!({ "session_id": session_id, "window_id": window_id }),
+        )?;
+        Ok(())
+    }
+
     /// Closes a session, ending every block in it. Unlike `rex kill`, no
     /// attach first: Rex closes it whoever is attached to it, or owns its
     /// blocks.

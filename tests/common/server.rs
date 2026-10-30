@@ -315,6 +315,14 @@ impl Server {
         self.call("session.view", &json!({ "session_id": session_id }))
     }
 
+    /// The ID of the session's active window, as `session.view` reports it.
+    pub fn active_window(&self, session_id: &str) -> String {
+        self.view(session_id)["active_window_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
     pub fn kill_session(&self, session_id: &str) {
         self.call("session.destroy", &json!({ "session_id": session_id }));
     }
