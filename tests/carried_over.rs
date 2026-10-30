@@ -131,6 +131,31 @@ fn a_session_whose_create_fails_under_force_keeps_its_live_one() {
     );
 }
 
+/// Created, but its new blocks can't be told apart: it failed, yet it's
+/// live and holds the lineage, so Rex's copy is closed all the same. Only
+/// one session of a lineage is ever live.
+#[test]
+fn a_session_created_under_force_whose_blocks_cant_be_told_apart_still_replaces_its_live_one() {
+    let env = TestEnv::new();
+    let server = env.start_server();
+    let [a, _] = two_saved_sessions(&env, &server);
+    // session.create creates zz-a as asked, but answers with no block IDs.
+    let stub = restarted_at(&env, LATER, 1).rewrite_when(
+        "session.create",
+        "zz-a",
+        r#"s/"block_ids":\[[^]]*\]/"block_ids":[]/g"#,
+    );
+
+    let out = run(&env, &server, &stub, &["restore", "--force"]).assert_failure();
+
+    let live_a = server.session_ids_labelled("zz-a");
+    assert_eq!(live_a.len(), 1, "{out}");
+    assert_ne!(live_a[0], a.id);
+    let failed = out.lines_starting("failed");
+    assert_eq!(failed.len(), 1, "{out}");
+    assert!(failed[0].contains(&format!("closed {}", a.id)), "{out}");
+}
+
 #[test]
 fn a_dry_run_with_force_says_what_it_would_replace_and_changes_nothing() {
     let env = TestEnv::new();

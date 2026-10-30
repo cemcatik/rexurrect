@@ -105,7 +105,7 @@ pub enum Outcome {
 /// Whether the live session that an [`Outcome::Replaced`] replaced was closed.
 #[derive(Debug)]
 pub enum Closed {
-    Yes,
+    Done,
     /// Rex refused, so both are live: too small to count as failing.
     Failed(String),
     /// It holds the block this restore runs in, so it's closed last, once
@@ -235,7 +235,7 @@ impl RestoreReport {
                     note,
                 } => {
                     let mut notes = vec![match closed {
-                        Closed::Yes => format!("closed {closed_session_id}"),
+                        Closed::Done => format!("closed {closed_session_id}"),
                         Closed::Failed(e) => format!("couldn't close {closed_session_id}: {e}"),
                         Closed::Last => {
                             format!("closing {closed_session_id} last: this restore runs in it")
@@ -537,7 +537,7 @@ fn restore_sessions(
         report.outcomes.push(match replacing {
             Some(live_session_id) => {
                 let last = own_session.as_deref() == Some(live_session_id.as_str());
-                replaced(rex, outcome, live_session_id, last)
+                close_replaced(rex, outcome, live_session_id, last)
             }
             None => outcome,
         });
@@ -545,33 +545,49 @@ fn restore_sessions(
     Ok(report)
 }
 
-/// `outcome`, the creation of a saved session in place of the live session
-/// `live_session_id` of its lineage, as a replacement once that's closed,
-/// unless it's to be closed `last`. If creating it failed, the live session
-/// is left as it is, and so is `outcome`.
-fn replaced(rex: &Rex, outcome: Outcome, live_session_id: String, last: bool) -> Outcome {
-    let Outcome::Created {
-        label,
-        session_id,
-        note,
-    } = outcome
-    else {
-        return outcome;
+/// Closes the live session `live_session_id` that `outcome`, the creation
+/// of a saved session of its lineage, replaces, unless it's to be closed
+/// `last`, and returns the outcome as a replacement. If creating it failed
+/// before creating anything, the live session is left as it is, and so is
+/// `outcome`. A session created all the same holds the lineage now, so the
+/// live one is closed then too (only one session of a lineage is ever live),
+/// though not last: the outcome stays a failure, which says so.
+fn close_replaced(rex: &Rex, outcome: Outcome, live_session_id: String, last: bool) -> Outcome {
+    let close = || match rex.destroy_session(&live_session_id) {
+        Ok(()) => Closed::Done,
+        Err(e) => Closed::Failed(e.to_string()),
     };
-    let closed = if last {
-        Closed::Last
-    } else {
-        match rex.destroy_session(&live_session_id) {
-            Ok(()) => Closed::Yes,
-            Err(e) => Closed::Failed(e.to_string()),
+    match outcome {
+        Outcome::Created {
+            label,
+            session_id,
+            note,
+        } => Outcome::Replaced {
+            label,
+            session_id,
+            closed: if last { Closed::Last } else { close() },
+            closed_session_id: live_session_id,
+            note,
+        },
+        Outcome::Failed {
+            label,
+            error,
+            session_id: Some(session_id),
+        } => {
+            let closed = if last {
+                format!("left {live_session_id} live: this restore runs in it")
+            } else if let Closed::Failed(e) = close() {
+                format!("couldn't close {live_session_id}: {e}")
+            } else {
+                format!("closed {live_session_id}")
+            };
+            Outcome::Failed {
+                label,
+                error: format!("{error}; {closed}"),
+                session_id: Some(session_id),
+            }
         }
-    };
-    Outcome::Replaced {
-        label,
-        session_id,
-        closed_session_id: live_session_id,
-        closed,
-        note,
+        failed => failed,
     }
 }
 

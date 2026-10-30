@@ -74,8 +74,8 @@ Restore options:
                      of the latest
   --session <label>  Restore only the saved sessions with this label
   -n, --dry-run      Print what would be created and skipped; create nothing
-  --force            Replace the saved sessions that are live (as Rex
-                     restores them itself, without scrollback or programs)
+  --force            Replace the saved sessions that are live (the ones
+                     Rex carries over, without scrollback or programs)
                      instead of skipping them: create each, then close the
                      live one
 

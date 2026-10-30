@@ -66,8 +66,8 @@ pub fn run() -> Result<ExitCode> {
         && restore::holds_carried_over_session(&rex, &state, &server)?
     {
         return Err(Error::new(
-            "Rex restored sessions by itself when this server started, without their \
-             scrollback or programs, and rexurrect hasn't replaced them yet, so nothing was \
+            "this server instance holds sessions Rex carried over when it started, without their \
+             scrollback or programs, which rexurrect hasn't replaced yet, so nothing was \
              saved and the latest snapshot is unchanged. To replace them with the latest \
              snapshot's sessions, run `rexurrect restore --force`, or let auto-restore do it \
              at the next server start",

@@ -21,7 +21,7 @@
 //!
 //! Nor does a record written once the server instance restore runs in had
 //! started, for a snapshot taken in an earlier one. The block can only have
-//! been live since then as a carried-over block (ADR-0008), in which Rex
+//! been live since then in a carried-over session (ADR-0008), in which Rex
 //! started a new shell, whose first prompt rewrote the record.
 //!
 //! [`SavedResume::record_written_at`]: crate::snapshot::SavedResume::record_written_at

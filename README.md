@@ -199,7 +199,7 @@ rexurrect list      # list the snapshots, newest first
     several share it), and fails if the snapshot has none;
   - `--dry-run` (`-n`) prints what would be created and skipped, and creates nothing;
   - `--force` replaces each saved session that's live instead of skipping it: see
-    [When Rex restores sessions itself](#when-rex-restores-sessions-itself).
+    [Sessions Rex carries over](#sessions-rex-carries-over).
 - **`list`** shows each snapshot's ID, when it was taken (UTC) and its session labels, newest
   first.
 
@@ -207,7 +207,7 @@ Whatever the snapshot, restore skips a saved session that's still live, even if 
 since, so restoring an older snapshot never brings back an older copy of a session you still
 have. Kill the live one first, or use `--force`, if that's what you want.
 
-### When Rex restores sessions itself
+### Sessions Rex carries over
 
 Newer Rex builds bring a server's sessions back by themselves when it starts, with their windows
 and layouts but without their scrollback or the programs that ran in them. rexurrect would see
@@ -235,7 +235,7 @@ session and block IDs, as every restored session does. See
   that way, logging each time, until auto-restore or `restore --force` has replaced them.
 
 rexurrect knows Rex's copy of a session by its blocks: Rex keeps their IDs, so a live block
-that's in a snapshot taken before the server started can only have been brought back by Rex.
+that's in a snapshot taken before the server started can only have been carried over by Rex.
 
 A block that can't come back as it was still comes back as a shell, so the layout around it
 stays intact. A block whose directory no longer exists opens in your home directory. A block
@@ -309,8 +309,8 @@ After a server restart, the first `save` restores before it saves, unless a `res
 ran on that server. A save that runs on a freshly started server (an autosave, say) therefore
 can't replace your latest snapshot with a near-empty one. A save on a server already restored
 into never restores again, even if you've killed restored sessions since. On a server that still
-holds sessions Rex brought back itself, it neither restores nor saves (see
-[When Rex restores sessions itself](#when-rex-restores-sessions-itself)). A `--dry-run` or
+holds sessions Rex carried over, it neither restores nor saves (see
+[Sessions Rex carries over](#sessions-rex-carries-over)). A `--dry-run` or
 `--session` restore doesn't count, because it leaves sessions out: a save after it would replace
 your latest snapshot without the other sessions. Restoring a whole older snapshot does count.
 Only one restore runs at a time, and a `save` that starts during a restore waits for it to
@@ -908,9 +908,9 @@ The server runs `init.lua` when it starts, and again on every `rex config reload
 until `init.lua` has finished, and carries on in the background:
 
 - It waits for the server to be ready, then restores the latest snapshot into it the way
-  `restore` does. At the server's start, saved sessions that are live (the ones Rex brought back
-  itself, without their scrollback or programs) are replaced, as `restore --force` replaces them
-  (see [When Rex restores sessions itself](#when-rex-restores-sessions-itself)). On a config
+  `restore` does. At the server's start, saved sessions that are live (the ones Rex carried
+  over, without their scrollback or programs) are replaced, as `restore --force` replaces them
+  (see [Sessions Rex carries over](#sessions-rex-carries-over)). On a config
   reload they're skipped, so nothing is duplicated.
 - It restores once per server instance. On a config reload, or on a server that `restore` or a
   `save` already restored into (see [Usage](#usage)), it restores nothing, so sessions you killed
