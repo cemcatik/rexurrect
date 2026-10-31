@@ -16,7 +16,7 @@ rules:
     ignore:
       - release.yml
   # dist runs a Linux build in a container only when [dist.github-custom-runners]
-  # gives its target one, and rexurrect's Linux targets have none.
+  # gives its target one, and that table names only aarch64-apple-darwin.
   unpinned-images:
     ignore:
       - release.yml
