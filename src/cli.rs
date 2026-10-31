@@ -74,6 +74,10 @@ Restore options:
                      of the latest
   --session <label>  Restore only the saved sessions with this label
   -n, --dry-run      Print what would be created and skipped; create nothing
+  --force            Replace the saved sessions that are live (the ones
+                     Rex carries over, without scrollback or programs)
+                     instead of skipping them: create each, then close the
+                     live one
 
 Autosave install and setup options:
   --interval <minutes>  Save this often instead (default: 15)
@@ -164,6 +168,7 @@ fn parse_restore(args: &mut Args) -> Result<RestoreOptions, UsageError> {
             "--snapshot" => options.snapshot = Some(args.value(&arg)?),
             "--session" => options.session = Some(args.value(&arg)?),
             "-n" | "--dry-run" => options.dry_run = true,
+            "--force" => options.force = true,
             _ => return Err(args.unexpected(&arg, "restore")),
         }
     }

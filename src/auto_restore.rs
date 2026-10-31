@@ -8,9 +8,10 @@
 //!
 //! The background run waits for the server to be ready, then restores into
 //! it unless rexurrect already has: once per server instance, so a config
-//! reload restores nothing. If that created sessions, it then closes the
-//! app session (see [`app_session`]). It logs the outcome either way, since
-//! nobody sees its output.
+//! reload restores nothing. At the server's start (init.lua's first run in
+//! it), it replaces the sessions Rex carried over (ADR-0008). If that
+//! created sessions, it then closes the app session (see [`app_session`]).
+//! It logs the outcome either way, since nobody sees its output.
 //!
 //! It never relies on `REX_SERVER` to reach the server: init.lua runs with
 //! whatever environment the server was started with, which can name another
@@ -29,7 +30,7 @@ use crate::error::{Context, Error, Result};
 use crate::instance::RestoreLock;
 use crate::log::{self, Log};
 use crate::process;
-use crate::restore::{self, RestoreReport};
+use crate::restore::{self, RestoreOptions, RestoreReport};
 use crate::rex::Rex;
 use crate::rex::server_process::{self, ServerProcess, Starter};
 use crate::state::{STATE_DIR_VAR, StateDir};
@@ -175,8 +176,16 @@ fn restore_when_ready(pid: u32) -> Result<ExitCode> {
     // Read again under the lock: the instance to restore into is whichever
     // the server is running once it's this run's turn.
     let server = ready.rex.server_status()?;
-    let restored =
-        restore::restore_unrestored_instance(&ready.rex, &state, &lock, &server, &config)?;
+    // Sessions live at the server's start are Rex's copies of the saved
+    // ones (ADR-0008): replaced. A config reload runs init.lua again in a
+    // server the user may have been working in: nothing is replaced then.
+    let options = RestoreOptions {
+        force: server.config.generation == 1,
+        ..RestoreOptions::default()
+    };
+    let restored = restore::restore_unrestored_instance(
+        &ready.rex, &state, &lock, &server, &config, &options,
+    )?;
     // The instance is recorded as restored by now. A save or restore that
     // starts while this run looks for the app session needn't wait for it.
     drop(lock);

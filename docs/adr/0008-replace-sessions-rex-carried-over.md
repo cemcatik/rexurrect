@@ -18,4 +18,6 @@ Rex builds with API revision 9 bring a server's sessions back by themselves when
 - `restore --force` run from inside a session it replaces closes that session last, after recording the restore and writing its report to `rexurrect.log`, so the terminal it ran in disappears.
 - On a server without auto-restore, autosaves pause after a restart (each logging why) until the user runs `restore --force`.
 - Replaced sessions get new session and block IDs, as every restored session does.
+- Rex starts a new shell in each block it carries over, and the zsh recorder rewrites the block's record at that shell's first prompt. So restoring from a snapshot taken in an earlier server instance ignores records written after the instance started when it asks whether a program exited after the save (#60): otherwise no replaced block would resume its program.
+- If Rex refuses to close its copy, both sessions stay live, against lineage's one live session (ADR-0001). That's left as a note on the replaced session rather than a failure, for the user to close by hand.
 - A Rex build that doesn't carry sessions over behaves as before: there's nothing live to replace.

@@ -69,7 +69,8 @@ fn a_first_window_that_cant_be_focused_leaves_the_session_created_with_a_note() 
         "{out}"
     );
     assert!(
-        out.stdout.contains("1 created, 0 skipped, 0 failed"),
+        out.stdout
+            .contains("1 created, 0 replaced, 0 skipped, 0 failed"),
         "{out}"
     );
     assert!(env.log_entries().is_empty(), "{:#?}", env.log_entries());

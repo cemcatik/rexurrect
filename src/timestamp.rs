@@ -61,22 +61,17 @@ impl Timestamp {
         format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02} UTC")
     }
 
-    /// Reads what [`Timestamp::rfc3339`] writes.
+    /// Reads what [`Timestamp::rfc3339`] writes, and Rex's own timestamps
+    /// (`server.status` `started_at`), which may carry up to nine digits of
+    /// fractional seconds, or none: digits past the microsecond are dropped.
     fn parse_rfc3339(text: &str) -> Option<Timestamp> {
         let number = |range: std::ops::Range<usize>| {
             text.get(range)
                 .filter(|digits| digits.bytes().all(|b| b.is_ascii_digit()))
                 .and_then(|digits| digits.parse::<u64>().ok())
         };
-        let separators = [
-            (4, b'-'),
-            (7, b'-'),
-            (10, b'T'),
-            (13, b':'),
-            (16, b':'),
-            (19, b'.'),
-        ];
-        if text.len() != 27
+        let separators = [(4, b'-'), (7, b'-'), (10, b'T'), (13, b':'), (16, b':')];
+        if text.len() < 20
             || !text.ends_with('Z')
             || separators.iter().any(|&(i, c)| text.as_bytes()[i] != c)
         {
@@ -84,7 +79,17 @@ impl Timestamp {
         }
         let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
         let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
-        let micros = u32::try_from(number(20..26)?).ok()?;
+        let micros = match &text[19..text.len() - 1] {
+            "" => 0,
+            fraction => {
+                let digits = fraction.strip_prefix('.')?;
+                if !(1..=9).contains(&digits.len()) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                let micros = format!("{:0<6}", &digits[..digits.len().min(6)]);
+                micros.parse::<u32>().ok()?
+            }
+        };
         if !(1..=12).contains(&month)
             || !(1..=31).contains(&day)
             || hour > 23
@@ -150,4 +155,52 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let doy = (153 * mp + 2) / 5 + i64::from(day) - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(text: &str) -> Option<String> {
+        Timestamp::parse_rfc3339(text).map(|t| t.rfc3339())
+    }
+
+    #[test]
+    fn what_rfc3339_writes_reads_back() {
+        let text = "2026-10-30T22:33:07.604396Z";
+        assert_eq!(parsed(text).as_deref(), Some(text));
+    }
+
+    /// Rex on Linux writes nanoseconds, Rex on macOS microseconds.
+    #[test]
+    fn rexs_timestamps_read_to_the_microsecond() {
+        assert_eq!(
+            parsed("2026-10-30T22:41:01.354984549Z").as_deref(),
+            Some("2026-10-30T22:41:01.354984Z")
+        );
+        assert_eq!(
+            parsed("2026-10-30T22:41:01.35Z").as_deref(),
+            Some("2026-10-30T22:41:01.350000Z")
+        );
+        assert_eq!(
+            parsed("2026-10-30T22:41:01Z").as_deref(),
+            Some("2026-10-30T22:41:01.000000Z")
+        );
+    }
+
+    #[test]
+    fn anything_else_is_refused() {
+        for text in [
+            "",
+            "2026-10-30T22:41:01",
+            "2026-10-30T22:41:01.Z",
+            "2026-10-30T22:41:01.1234567890Z",
+            "2026-10-30T22:41:01,5Z",
+            "2026-10-30 22:41:01Z",
+            "2026-13-30T22:41:01Z",
+            "2026-10-30T22:41:01.12a4Z",
+        ] {
+            assert_eq!(parsed(text), None, "{text:?}");
+        }
+    }
 }

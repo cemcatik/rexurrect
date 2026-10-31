@@ -10,7 +10,7 @@ use crate::error::{Context, Error, Result};
 use crate::instance::RestoreLock;
 use crate::lineage::LineageMap;
 use crate::log;
-use crate::restore;
+use crate::restore::{self, RestoreOptions};
 use crate::rex::Rex;
 use crate::rex::api::ServerStatus;
 use crate::scrollback::ScrollbackStore;
@@ -45,6 +45,12 @@ pub enum Saved {
 /// save anything on this server. Its error names the snapshot, to retry by
 /// hand.
 ///
+/// On an unrestored server instance that holds a session Rex carried over
+/// from the latest snapshot (ADR-0008), it neither restores nor saves: a
+/// restore would skip Rex's copy, and a save replace the latest snapshot
+/// with it, without its scrollback or programs. Auto-restore at the
+/// server's start, or `restore --force`, replaces it first.
+///
 /// Holds the restore lock throughout: a save that finds a restore running
 /// waits for it rather than saving a half-restored server.
 pub fn run() -> Result<ExitCode> {
@@ -56,10 +62,26 @@ pub fn run() -> Result<ExitCode> {
     // Read once, under the lock: restoring first and saving agree on the
     // server instance, and on which host is local.
     let server = rex.server_status()?;
-    let mut status = ExitCode::SUCCESS;
-    if let Some(report) =
-        restore::restore_unrestored_instance(&rex, &state, &lock, &server, &config)?
+    if !lock.is_restored(&server.instance_id)?
+        && restore::holds_carried_over_session(&rex, &state, &server)?
     {
+        return Err(Error::new(
+            "this server instance holds sessions Rex carried over when it started, without their \
+             scrollback or programs, which rexurrect hasn't replaced yet, so nothing was \
+             saved and the latest snapshot is unchanged. To replace them with the latest \
+             snapshot's sessions, run `rexurrect restore --force`, or let auto-restore do it \
+             at the next server start",
+        ));
+    }
+    let mut status = ExitCode::SUCCESS;
+    if let Some(report) = restore::restore_unrestored_instance(
+        &rex,
+        &state,
+        &lock,
+        &server,
+        &config,
+        &RestoreOptions::default(),
+    )? {
         println!("restored first: this server instance hadn't been restored into yet");
         let mut out = std::io::stdout().lock();
         status = report.finish(&state, "save (restoring first)", &mut out);

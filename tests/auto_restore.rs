@@ -570,7 +570,7 @@ fn an_untouched_session_created_once_auto_restore_stopped_looking_is_left_alone(
         entries[0],
         format!(
             "{} auto-restore into {} (server instance {}): created  zz-proj  {}; \
-             restore: 1 created, 0 skipped, 0 failed",
+             restore: 1 created, 0 replaced, 0 skipped, 0 failed",
             timestamp_of(&entries[0]),
             server.endpoint(),
             server.status()["instance_id"].as_str().unwrap(),
