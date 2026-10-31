@@ -7,10 +7,10 @@ A standalone tool that saves Rex sessions and recreates them after the Rex serve
 ### Rex
 
 **Server**:
-The Rex process that owns every session on a machine. When it stops, all of its sessions are gone.
+The Rex process that owns every session on a machine. When it stops, its sessions' programs and scrollback are gone; Rex may bring the sessions themselves back when it starts again (see **Carried-over session**).
 
 **Server instance**:
-One run of the server, from start to stop. Rex gives each one its own ID; no session outlives the instance it was created in.
+One run of the server, from start to stop. Rex gives each one its own ID. A session lives in one instance only, unless Rex carries it over into the next.
 _Avoid_: boot, server session, lifetime
 
 **Build**:
@@ -123,8 +123,16 @@ The first two minutes after restore creates a session, while its blocks' shells 
 **Skipped session**:
 A saved session that restore doesn't create because a session of its lineage is already live. A live session with the same label but a different lineage doesn't count.
 
+**Carried-over session**:
+A live session Rex brought back by itself when its server started, keeping its ID and its blocks' IDs but not their scrollback or programs. rexurrect knows one by a block that's also in a snapshot taken before the server instance started.
+_Avoid_: Rex-restored session, native session
+
+**Replaced session**:
+A live session of a saved session's lineage that restore closed after creating the saved session again in its place. Auto-restore replaces at server start; `restore --force` replaces on request.
+_Avoid_: forced session, overwritten session
+
 **Unrestored server instance**:
-A server instance rexurrect hasn't restored into yet. Save restores before saving from one, so a freshly started server never replaces the latest snapshot.
+A server instance rexurrect hasn't restored into yet. Save restores before saving from one, so a freshly started server never replaces the latest snapshot. If it holds carried-over sessions, save neither restores nor saves: it leaves them for auto-restore or `restore --force` to replace.
 
 **Auto-restore**:
 A restore that runs by itself once per server instance, as soon as the server is ready.
