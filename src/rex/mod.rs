@@ -100,8 +100,14 @@ pub enum RexError {
         error: std::io::Error,
     },
     /// No server at the endpoint (`rex` exit status 4). Autostart is off, so
-    /// this is the normal answer while the Rex server is down.
-    NotRunning { method: String, message: String },
+    /// this is the normal answer while the Rex server is down. Names the
+    /// endpoint itself when rexurrect gave one: how `rex`'s `message` names
+    /// it changes between Rex builds (#95).
+    NotRunning {
+        method: String,
+        endpoint: Option<String>,
+        message: String,
+    },
     /// `rex` ran and reported an error (bad request, not found, timeout, ...).
     Failed {
         method: String,
@@ -133,7 +139,21 @@ impl fmt::Display for RexError {
                     program.display()
                 )
             }
-            RexError::NotRunning { method, message } => {
+            RexError::NotRunning {
+                method,
+                endpoint: Some(endpoint),
+                message,
+            } => {
+                write!(
+                    f,
+                    "rex api call {method}: the Rex server at {endpoint} isn't running: {message}"
+                )
+            }
+            RexError::NotRunning {
+                method,
+                endpoint: None,
+                message,
+            } => {
                 write!(
                     f,
                     "rex api call {method}: the Rex server isn't running: {message}"
@@ -306,6 +326,10 @@ impl Rex {
             return Err(match out.status.code() {
                 Some(4) => RexError::NotRunning {
                     method: method.to_string(),
+                    endpoint: self
+                        .server
+                        .as_ref()
+                        .map(|server| server.to_string_lossy().into_owned()),
                     message,
                 },
                 _ if is_perl_rex(&self.program) => RexError::PerlRex {
