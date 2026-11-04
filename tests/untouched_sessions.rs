@@ -164,13 +164,14 @@ fn a_shell_in_home_that_never_reports_its_working_directory_is_untouched_too() {
 }
 
 /// A server whose only sessions are untouched is an empty server: like one
-/// with no sessions at all, it never replaces the latest snapshot.
+/// with no sessions at all, on an emptied server instance it's saved as a
+/// snapshot with no sessions.
 #[test]
-fn save_on_a_server_holding_only_untouched_sessions_writes_nothing() {
+fn save_on_an_emptied_server_instance_holding_only_untouched_sessions_saves_no_sessions() {
     let env = env_with_own_home();
     let server = env.start_server();
     let a = env.mkdir("a");
-    let kept = server.create_session("zz-kept", &[window(shell(&a))]);
+    let kept = server.create_session("zz-closed", &[window(shell(&a))]);
     server.wait_for_pwds(&kept);
     env.save(&server);
     server.kill_session(&kept.id);
@@ -179,18 +180,17 @@ fn save_on_a_server_holding_only_untouched_sessions_writes_nothing() {
     server.rename_session(&renamed.id, "zz-renamed");
     server.wait_for_pwds(&untouched);
     server.wait_for_pwds(&renamed);
-    let snapshots = env.listed(&server);
 
     env.save(&server);
 
-    assert_eq!(env.listed(&server), snapshots, "no new snapshot");
+    let listed = env.listed(&server);
+    assert!(
+        listed.lines().next().unwrap().ends_with("(no sessions)"),
+        "{listed}"
+    );
     kill_every_session(&server);
     env.restore(&server);
-    assert_eq!(
-        server.sorted_labels(),
-        ["zz-kept"],
-        "the earlier snapshot is still the latest"
-    );
+    assert_eq!(server.sessions(), [], "zz-closed came back");
 }
 
 /// Restore carries a block's last command forward, so a restored session

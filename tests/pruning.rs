@@ -71,11 +71,11 @@ fn a_save_that_fails_to_write_its_snapshot_removes_no_recorder_files() {
     assert!(recorder_file(&env, &gone_block).exists());
 }
 
-/// An empty server writes no snapshot, so it removes nothing either: a save
-/// that finds no sessions can't tell a server that lost them from one that
-/// never had them.
+/// On an emptied server instance, a save from an empty server writes a
+/// snapshot with no sessions, so it removes what isn't live like any other
+/// save: the closed sessions' recorder files and lineage entries.
 #[test]
-fn a_save_from_an_empty_server_removes_nothing() {
+fn a_save_on_an_emptied_server_instance_removes_what_is_not_live() {
     let env = TestEnv::new();
     let server = env.start_server();
     let (original, original_block) = session_with_one_block(&env, &server, "zz-proj");
@@ -86,11 +86,12 @@ fn a_save_from_an_empty_server_removes_nothing() {
     let restored = server.the_session_labelled("zz-proj");
     let restored_block = server.block_ids(&restored).remove(0);
     env.write_recorder_file(&restored_block, "echo zz-restored");
+    assert!(lineage_map_mentions(&env, &restored));
     server.kill_session(&restored);
 
     env.save(&server);
-    assert!(lineage_map_mentions(&env, &restored));
-    assert!(recorder_file(&env, &restored_block).exists());
+    assert!(!lineage_map_mentions(&env, &restored));
+    assert!(!recorder_file(&env, &restored_block).exists());
 }
 
 /// A stand-in `rex` that passes every call to the real one and, each time
