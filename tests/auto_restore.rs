@@ -721,6 +721,35 @@ fn with_no_snapshot_auto_restore_closes_nothing() {
     assert_eq!(server.sorted_labels(), ["zz-app"]);
 }
 
+/// The latest snapshot of an emptied server instance has no sessions
+/// (ADR-0009): auto-restore creates nothing, so it leaves the app session
+/// alone, and it counts the instance as restored, so a save there doesn't
+/// restore first.
+#[test]
+fn with_a_latest_snapshot_with_no_sessions_auto_restore_creates_and_closes_nothing() {
+    let env = env_with_own_home();
+    {
+        let before = env.start_server();
+        let gone = before.create_session("zz-closed", &[window(shell(env.mkdir("a")))]);
+        before.wait_for_pwds(&gone);
+        env.save(&before);
+        before.kill_session(&gone.id);
+        env.save(&before);
+    }
+    let server = server_watching_for(&env, 2);
+    untouched_session(&server, "zz-app");
+
+    turn_on_auto_restore(&env, &server);
+    let entries = wait_for_auto_restores(&env, 1);
+
+    assert!(entries[0].contains("0 created"), "{entries:#?}");
+    assert!(!entries[0].contains("closed app session"), "{entries:#?}");
+    assert_eq!(server.sorted_labels(), ["zz-app"]);
+    let saved = env.save(&server);
+    assert!(!saved.stdout.contains("restored first"), "{saved}");
+    assert!(saved.stdout.contains("nothing changed"), "{saved}");
+}
+
 #[test]
 fn an_auto_restore_in_which_every_session_failed_before_being_created_closes_nothing() {
     let env = env_with_own_home();

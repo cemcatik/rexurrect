@@ -73,7 +73,11 @@ _Avoid_: backup, save file
 The most recently written snapshot, and the one restore uses unless told otherwise.
 
 **Empty server**:
-A server with no live sessions worth saving: none at all, or only untouched ones. Saving from one never replaces the latest snapshot.
+A server with no live sessions worth saving: none at all, or only untouched ones. On an emptied server instance, saving from one records that nothing is live, so the next start restores nothing. On any other server instance (an unrestored one, or one whose restore failed and that nothing has been saved from since), saving from one never replaces the latest snapshot.
+
+**Emptied server instance**:
+A server instance that's an empty server because the user closed its sessions: rexurrect restored into it, at least in part, or has saved from it since a failed restore. An empty server on any other instance is one the user hasn't worked in yet.
+_Avoid_: closed server, cleared server
 
 **Untouched session**:
 A session with nothing worth restoring: one window holding one shell block, default window and block labels, its working directory still home, and no last command. Its label doesn't count, so a session that was only renamed is still untouched. Untouched sessions aren't saved.

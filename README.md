@@ -184,8 +184,14 @@ rexurrect list      # list the snapshots, newest first
     session you only renamed is still untouched. A restored session keeps its last command, so
     it doesn't turn untouched just because you haven't run anything in it since.
   - If there's nothing to save (no sessions, or only untouched sessions or sessions with no
-    windows left), `save` writes nothing, leaves `latest.json` alone and exits 0, so a server
-    with nothing on it never replaces your latest snapshot.
+    windows left) because you closed them, `save` writes a snapshot with no sessions, so the
+    next start brings nothing back. It writes only one: while the latest snapshot has no
+    sessions, `save` says nothing changed and writes nothing, so autosaves don't push your
+    earlier snapshots out. Those stay in `list`, to bring back with `restore --snapshot <id>`.
+    On a server that hasn't been restored into yet, `save` restores first, so a freshly
+    started server never replaces your latest snapshot. If every session in that restore
+    failed, an empty server there keeps the latest snapshot until a save from it has written
+    one ([ADR-0009](docs/adr/0009-an-emptied-server-instance-replaces-the-latest-snapshot.md)).
   - If Rex's output doesn't have the shape rexurrect expects (Rex is in beta and its API
     can change) or the snapshot fails validation (every session needs a window, every split
     ratio must be between 0 and 1), `save` writes nothing, exits non-zero and says what didn't
@@ -360,7 +366,8 @@ Snapshots and rexurrect's own bookkeeping live in its state directory:
 It holds `snapshots/`, `latest.json` and `lineage.json`, the lineage map, which remembers which
 live session restore created from which saved one. Deleting `lineage.json` makes the next
 `restore` recreate sessions that are already live. `restored-instances` names the server
-instances restore has run in (the 32 most recent), and `restore.lock` makes restores take turns.
+instances restore has run in (the 32 most recent), marking those where every session a save
+tried to restore first failed, and `restore.lock` makes restores take turns.
 `starting-sessions.json` holds what restore created each session with, for saves in its first
 two minutes.
 `recorder/` holds one file per block with the last command the recorder recorded, rewritten
@@ -861,10 +868,11 @@ as it.
 
 **Servers that stop when empty.** The login server starts each server with `--exit-empty`:
 once no session and no client connection is left, the server stops, and the next connection
-starts a new one. So with no client connected, closing your last session stops the server, and
+starts a new one. Closing every session sticks only if a save runs while the server is empty.
+With no client connected, closing your last session stops the server before any save can, and
 the next connection's auto-restore brings back the latest snapshot's sessions, including the
-ones you just closed. That's what happens after any restart on macOS too: a save from an
-empty server never replaces the latest snapshot. Servers on Linux just restart more often.
+ones you just closed. The same happens on macOS if the server restarts before the next
+autosave. Servers on Linux just restart more often (see #33).
 
 ## Auto-restore
 

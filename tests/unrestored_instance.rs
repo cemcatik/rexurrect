@@ -286,6 +286,38 @@ fn a_save_whose_restore_first_fails_for_every_session_saves_nothing_and_the_next
     assert_eq!(third.sorted_labels(), ["zz-early", "zz-wide"]);
 }
 
+/// After a save whose restore first failed for every session, the user
+/// never had the latest snapshot's sessions to close: an empty server there
+/// keeps the latest snapshot. Once a snapshot is saved from the instance,
+/// emptying it is saved like on any other emptied server instance.
+#[test]
+fn after_every_session_failed_to_restore_first_an_empty_server_is_saved_only_once_a_snapshot_was() {
+    let env = TestEnv::new();
+    let server = a_server_that_cant_restore_anything(&env);
+    env.rexurrect(&server).arg("save").run().assert_failure();
+    server.kill_session(&server.the_session_labelled("zz-early"));
+    let snapshots = env.listed(&server);
+
+    let out = env.save(&server);
+    assert!(out.stdout.contains("nothing to save"), "{out}");
+    assert_eq!(env.listed(&server), snapshots, "a new snapshot: {out}");
+
+    let later = server.create_session("zz-later", &[window(shell(env.mkdir("b")))]);
+    server.wait_for_pwds(&later);
+    env.save(&server);
+    server.kill_session(&later.id);
+    let out = env.save(&server);
+    assert!(
+        out.stdout.contains("saved a snapshot with no sessions"),
+        "{out}"
+    );
+    let listed = env.listed(&server);
+    assert!(
+        listed.lines().next().unwrap().ends_with("(no sessions)"),
+        "{listed}"
+    );
+}
+
 #[test]
 fn a_restore_in_which_every_session_failed_does_not_count_as_restoring_the_instance() {
     let env = TestEnv::new();

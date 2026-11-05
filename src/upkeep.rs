@@ -4,9 +4,10 @@
 //! Recorder files, resume state and default last commands are keyed by
 //! block ID, lineage entries and startup-window records by session ID, and
 //! Rex never reuses either, so once a block or session is gone its file or
-//! entry can't matter again. Save removes them only once it has written a snapshot. A save that
-//! fails, or finds an empty server and writes nothing, removes nothing: what
-//! it read can't be trusted to say what's gone.
+//! entry can't matter again. Save removes them only once it has written a
+//! snapshot, one with no sessions included (an emptied server instance,
+//! ADR-0009). A save that fails, or writes nothing, removes nothing: what it
+//! read can't be trusted to say what's gone.
 
 use std::collections::HashSet;
 use std::time::SystemTime;

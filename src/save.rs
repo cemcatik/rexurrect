@@ -7,7 +7,7 @@ use crate::capture::{self, SessionWithScrollback};
 use crate::config::Config;
 use crate::create;
 use crate::error::{Context, Error, Result};
-use crate::instance::RestoreLock;
+use crate::instance::{RestoreLock, Restored};
 use crate::lineage::LineageMap;
 use crate::log;
 use crate::restore::{self, RestoreOptions};
@@ -26,8 +26,14 @@ use crate::upkeep::{self, Live};
 pub enum Saved {
     /// A new snapshot, now the latest.
     Snapshot { path: PathBuf, sessions: usize },
-    /// The server is empty: nothing was written and the latest snapshot is
-    /// unchanged.
+    /// The server instance is emptied (see [`save`]): a new snapshot with no
+    /// sessions, now the latest.
+    Emptied { path: PathBuf },
+    /// The server instance is emptied, but the latest snapshot already has
+    /// no sessions: nothing changed, so nothing was written.
+    StillEmpty,
+    /// The server is empty, but its instance isn't emptied: nothing was
+    /// written and the latest snapshot is unchanged.
     EmptyServer,
 }
 
@@ -39,11 +45,15 @@ pub enum Saved {
 /// failed to restore, but then exits non-zero.
 ///
 /// If every session it tried failed, it restored nothing, so it saves
-/// nothing either: the latest snapshot stays as it is. It counts the server
-/// instance as restored all the same, unlike `restore` and auto-restore:
-/// otherwise every later save would restore first, fail again, and never
-/// save anything on this server. Its error names the snapshot, to retry by
-/// hand.
+/// nothing either: the latest snapshot stays as it is. It records the
+/// failed restore, unlike `restore` and auto-restore: otherwise every later
+/// save would restore first, fail again, and never save anything on this
+/// server. Its error names the snapshot, to retry by hand. Until a snapshot
+/// is saved from such an instance, it isn't emptied (ADR-0009): the user
+/// never had the latest snapshot's sessions to close.
+///
+/// On an emptied server instance, an empty server is saved as a snapshot
+/// with no sessions, unless the latest snapshot already has none.
 ///
 /// On an unrestored server instance that holds a session Rex carried over
 /// from the latest snapshot (ADR-0008), it neither restores nor saves: a
@@ -86,7 +96,7 @@ pub fn run() -> Result<ExitCode> {
         let mut out = std::io::stdout().lock();
         status = report.finish(&state, "save (restoring first)", &mut out);
         if report.every_attempt_failed() {
-            lock.record_restored(&server.instance_id)?;
+            lock.record_restore_failed(&server.instance_id)?;
             let snapshot = report.snapshot.as_deref().unwrap_or_default();
             return Err(Error::new(format!(
                 "every session in snapshot {snapshot} failed to restore into this server \
@@ -96,9 +106,22 @@ pub fn run() -> Result<ExitCode> {
             )));
         }
     }
-    match save(&rex, &state, &server, config)? {
+    match save(&rex, &state, &lock, &server, config)? {
         Saved::Snapshot { path, sessions } => {
             println!("saved {sessions} session(s) to {}", path.display());
+        }
+        Saved::Emptied { path } => {
+            println!(
+                "no sessions worth saving: saved a snapshot with no sessions to {}, so the \
+                 next restore creates nothing",
+                path.display()
+            );
+        }
+        Saved::StillEmpty => {
+            println!(
+                "nothing changed: no sessions worth saving, and the latest snapshot has none \
+                 either"
+            );
         }
         Saved::EmptyServer => {
             println!("nothing to save: no sessions worth saving; the latest snapshot is unchanged");
@@ -108,18 +131,28 @@ pub fn run() -> Result<ExitCode> {
 }
 
 /// Saves every session worth saving on the server `server` (its
-/// `server.status`) describes.
-pub fn save(rex: &Rex, state: &StateDir, server: &ServerStatus, config: Config) -> Result<Saved> {
+/// `server.status`, read under `lock`) describes.
+///
+/// If none is (an empty server), it writes a snapshot with no sessions only
+/// on an emptied server instance (ADR-0009): the user closed its sessions.
+/// Otherwise it writes nothing, and the latest snapshot stays as it is.
+pub fn save(
+    rex: &Rex,
+    state: &StateDir,
+    lock: &RestoreLock,
+    server: &ServerStatus,
+    config: Config,
+) -> Result<Saved> {
     // Taken first: each kept session's scrollback is saved under the
     // snapshot's name as the walk reaches it, and startup windows are judged
     // as of then.
     let taken_at = Timestamp::now();
     let starting = StartingSessions::load(state)?.at(taken_at);
     let replaying: Vec<String> = starting.snapshots().map(str::to_string).collect();
-    let saved = save_snapshot(rex, state, server, config, taken_at, starting);
+    let saved = save_snapshot(rex, state, lock, server, config, taken_at, starting);
     // Scrollback is kept as long as its snapshot: old snapshots' goes with
-    // them, and a save that wrote no snapshot (an empty server, a failure)
-    // leaves none behind. A restore in its startup window keeps its
+    // them, and a save that wrote no snapshot (an empty server it didn't
+    // save, a failure) leaves none behind. A restore in its startup window keeps its
     // snapshot's longer: the replay may not have printed it yet, and saves
     // in the window save the restored blocks' scrollback from it.
     let removed = SnapshotStore::new(state)
@@ -137,6 +170,7 @@ pub fn save(rex: &Rex, state: &StateDir, server: &ServerStatus, config: Config) 
 fn save_snapshot(
     rex: &Rex,
     state: &StateDir,
+    lock: &RestoreLock,
     server: &ServerStatus,
     config: Config,
     taken_at: Timestamp,
@@ -185,14 +219,30 @@ fn save_snapshot(
             .save()
             .with_context(|| "remembering the programs seen in blocks")?;
     }
+    let restored = lock.restored(&server.instance_id)?;
     if sessions.is_empty() {
-        return Ok(Saved::EmptyServer);
+        if restored != Restored::Yes {
+            return Ok(Saved::EmptyServer);
+        }
+        if latest_has_no_sessions(state) {
+            return Ok(Saved::StillEmpty);
+        }
     }
     let snapshot = Snapshot::new(taken_at, sessions);
     snapshot
         .validate()
         .with_context(|| "the snapshot failed validation, so nothing was written")?;
     let path = SnapshotStore::new(state).write(&snapshot, config.retention)?;
+    if restored == Restored::Failed {
+        // A snapshot saved from it: emptying it from now on is the user's
+        // doing.
+        lock.record_restored(&server.instance_id).with_context(|| {
+            format!(
+                "saved {}, but then failed to record this server instance as restored",
+                path.display()
+            )
+        })?;
+    }
     // Logged only now: until the snapshot is written, no block is saved,
     // with scrollback or without. Only the blocks that start falling back
     // with this save (see `too_large`).
@@ -227,14 +277,34 @@ fn save_snapshot(
             path.display()
         )
     })?;
-    Ok(Saved::Snapshot {
-        path,
-        sessions: snapshot.sessions.len(),
+    Ok(match snapshot.sessions.len() {
+        0 => Saved::Emptied { path },
+        sessions => Saved::Snapshot { path, sessions },
     })
 }
 
+/// Whether the latest snapshot already records an emptied server instance:
+/// it has no sessions. A save on an emptied instance then writes nothing, so
+/// that autosaves on an empty server don't push the snapshots before it out
+/// of retention (ADR-0009).
+///
+/// A latest snapshot that can't be read doesn't count: the save writes a
+/// new one and points latest at it, and logs why. Save reads no snapshot
+/// otherwise, and a broken one mustn't fail every autosave on an empty
+/// server; `list` still shows it as unreadable.
+fn latest_has_no_sessions(state: &StateDir) -> bool {
+    match SnapshotStore::new(state).read_latest() {
+        Ok(latest) => latest.is_some_and(|(_, latest)| latest.sessions.is_empty()),
+        Err(e) => {
+            log::log_warning(state, "save", &format!("{e}; saving a new latest snapshot"));
+            false
+        }
+    }
+}
+
 /// Whether a live session has anything to restore. A server where no
-/// session does is an empty server, and saving from it writes nothing.
+/// session does is an empty server, which only an emptied server instance
+/// saves (ADR-0009).
 ///
 /// A session that saved no windows has nothing to restore. Rex keeps a
 /// session live, with no windows, after its last shell exits. Neither has an

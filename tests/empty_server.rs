@@ -1,5 +1,10 @@
-//! A save from an empty server writes nothing and leaves the latest snapshot
-//! alone, so an autosave between a restart and a restore can't destroy it.
+//! An empty server: one with no sessions worth saving.
+//!
+//! On an emptied server instance, one rexurrect restored into, the user
+//! closed its sessions, and a save records that with a snapshot with no
+//! sessions (ADR-0009). On a fresh one, a save restores first, so an
+//! autosave between a restart and a restore can't destroy the latest
+//! snapshot.
 
 mod common;
 
@@ -56,35 +61,42 @@ fn save_on_a_fresh_server_with_no_sessions_keeps_the_latest_snapshot() {
     );
 }
 
-/// The same guard on a server instance that has already been restored into,
-/// where a save never restores first.
+/// On an emptied server instance, one rexurrect has restored into (here, the
+/// save with no snapshot yet), the user closed every session: a save records
+/// that, so neither a restore nor a restart brings them back.
 #[test]
-fn save_after_every_session_was_killed_keeps_the_latest_snapshot() {
+fn save_after_every_session_was_killed_saves_a_snapshot_with_no_sessions() {
     let env = TestEnv::new();
     let server = env.start_server();
-    let a = env.mkdir("a");
-    let fixture = server.create_session("zz-kept", &[window(shell(&a))]);
+    let fixture = server.create_session("zz-closed", &[window(shell(env.mkdir("a")))]);
     server.wait_for_pwds(&fixture);
     env.save(&server);
     server.kill_session(&fixture.id);
 
-    env.save(&server);
+    let out = env.save(&server);
+    assert!(
+        out.stdout.contains("saved a snapshot with no sessions"),
+        "{out}"
+    );
+    assert!(!out.stdout.contains("nothing to save"), "{out}");
+    let listed = env.listed(&server);
+    let newest = listed.lines().next().unwrap();
+    assert!(newest.ends_with("(no sessions)"), "{listed}");
 
-    env.restore(&server);
-    let restored = server.session_ids_labelled("zz-kept");
-    assert_eq!(
-        restored.len(),
-        1,
-        "the earlier snapshot is still the latest"
-    );
-    assert_eq!(
-        server.window_shapes(&restored[0]),
-        [shell(&a).expected_shape()]
-    );
+    let restored = env.restore(&server);
+    assert!(restored.lines_starting("created").is_empty(), "{restored}");
+    assert_eq!(server.sessions(), []);
+
+    drop(server);
+    let fresh = env.start_server();
+    let saved = env.save(&fresh);
+    assert!(saved.stdout.contains("restored first"), "{saved}");
+    assert_eq!(fresh.sessions(), [], "a session came back: {saved}");
 }
 
 /// A session with no windows has nothing to restore: it's left out instead
-/// of failing the save, and a server holding only such sessions is empty.
+/// of failing the save, and a server holding only such sessions is empty,
+/// here on an emptied server instance.
 #[test]
 fn a_session_whose_last_shell_exited_is_left_out_of_the_snapshot() {
     let env = TestEnv::new();
@@ -96,10 +108,48 @@ fn a_session_whose_last_shell_exited_is_left_out_of_the_snapshot() {
     exit_last_shell(&server, &emptied);
 
     env.save(&server);
+    let listed = env.listed(&server);
+    assert!(
+        listed.lines().next().unwrap().ends_with("  zz-kept"),
+        "{listed}"
+    );
     server.kill_session(&kept.id);
-    env.save(&server); // Only zz-emptied is live: an empty server.
+    let out = env.save(&server); // Only zz-emptied is live: an empty server.
+    assert!(
+        out.stdout.contains("saved a snapshot with no sessions"),
+        "{out}"
+    );
     server.kill_session(&emptied.id);
 
     env.restore(&server);
-    assert_eq!(server.sorted_labels(), ["zz-kept"]);
+    assert_eq!(server.sessions(), []);
+}
+
+/// Autosave keeps saving an emptied server instance: one snapshot with no
+/// sessions records it, and the next saves change nothing, so they don't
+/// push earlier snapshots out of retention. Those stay listed and
+/// restorable.
+#[test]
+fn repeated_saves_on_an_emptied_server_instance_write_one_snapshot_with_no_sessions() {
+    let env = TestEnv::new();
+    let server = env.start_server();
+    let fixture = server.create_session("zz-closed", &[window(shell(env.mkdir("a")))]);
+    server.wait_for_pwds(&fixture);
+    env.save(&server);
+    server.kill_session(&fixture.id);
+    env.save(&server);
+    let listed = env.listed(&server);
+
+    let out = env.save(&server);
+    assert!(out.stdout.contains("nothing changed"), "{out}");
+    assert_eq!(env.listed(&server), listed, "a new snapshot: {out}");
+
+    let earlier = listed.lines().nth(1).unwrap();
+    assert!(earlier.ends_with("zz-closed"), "{listed}");
+    let id = earlier.split("  ").next().unwrap();
+    env.rexurrect(&server)
+        .args(["restore", "--snapshot", id])
+        .run()
+        .assert_success();
+    assert_eq!(server.sorted_labels(), ["zz-closed"]);
 }

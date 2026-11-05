@@ -246,6 +246,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// What a save on an emptied server instance writes (ADR-0009).
+    #[test]
+    fn a_snapshot_with_no_sessions_is_valid_and_reads_back_with_none() {
+        let snapshot = Snapshot::new(Timestamp::now(), Vec::new());
+        snapshot.validate().unwrap();
+        let json = serde_json::to_vec(&snapshot).unwrap();
+        let read: Snapshot = serde_json::from_slice(&json).unwrap();
+        assert!(read.sessions.is_empty());
+        read.validate().unwrap();
+    }
+
     /// Snapshots taken before rexurrect resumed programs restore as before.
     #[test]
     fn a_block_saved_before_resuming_existed_has_nothing_to_resume() {
