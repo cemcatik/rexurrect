@@ -148,10 +148,11 @@ fn a_tiled_layer_whose_layout_moved_fails_save() {
     assert_latest_is_unchanged(&env, &server, &fixture, &layout);
 }
 
-/// Rex always reports a block's foreground process, so a renamed
-/// `foreground` must not pass for a block with nothing in its foreground:
-/// that would quietly lose its fallback last command, its working directory
-/// before its shell reports one, and the no-scrollback check.
+/// Rex reports a block's foreground process while the block's program runs,
+/// so a renamed `foreground` must not pass for a block with nothing in its
+/// foreground: that would quietly lose its fallback last command, its
+/// working directory before its shell reports one, and the no-scrollback
+/// check.
 #[test]
 fn a_process_answer_whose_foreground_moved_fails_save() {
     let env = TestEnv::new();

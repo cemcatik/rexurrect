@@ -1,6 +1,7 @@
 //! The Rex API shapes rexurrect reads and sends, as verified against
 //! Rex 0.0.1791570264-g7b5bf3 (floating layers and `session.new_layer`:
-//! 0.0.1793131181-gdd9a20).
+//! 0.0.1793131181-gdd9a20; the terminal `process` method's `last_exit`, and
+//! its leaving out `foreground` once `last_exit` is set: 0.1.0-preview.21).
 //!
 //! Parsing is strict about what rexurrect relies on (a changed shape is an
 //! error, not an empty snapshot) and lenient about the rest: unknown keys are
@@ -12,7 +13,6 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
 use crate::timestamp::Timestamp;
@@ -297,7 +297,17 @@ struct ProcessAnswer {
     home: PathBuf,
     /// How the block's program exited: `null` while it runs.
     #[serde(default)]
-    last_exit: Option<IgnoredAny>,
+    last_exit: Option<LastExit>,
+}
+
+/// How a block's program exited, as the terminal `process` method reports
+/// it. Parsed only so that a changed shape fails rather than passing for
+/// "exited".
+#[derive(Deserialize)]
+struct LastExit {
+    /// The program's exit code, or -1 when a signal ended it.
+    #[expect(dead_code, reason = "parsed to check the shape, not read")]
+    exit_code: i64,
 }
 
 impl TryFrom<ProcessAnswer> for TerminalProcess {
@@ -306,7 +316,7 @@ impl TryFrom<ProcessAnswer> for TerminalProcess {
     /// Only a block whose program has exited may leave out `foreground`.
     fn try_from(answer: ProcessAnswer) -> Result<Self, Self::Error> {
         if answer.foreground.is_none() && answer.last_exit.is_none() {
-            return Err("missing field `foreground`");
+            return Err("no `foreground` while the block's program is running");
         }
         Ok(TerminalProcess {
             foreground: answer.foreground,
@@ -611,10 +621,27 @@ mod tests {
     /// Rex reports no foreground process, and a save must not fail on it.
     #[test]
     fn a_block_whose_program_exited_has_no_foreground_program() {
-        let process: TerminalProcess =
-            serde_json::from_str(r#"{"last_exit":{"exit_code":0},"home":"/Users/u"}"#).unwrap();
-        assert!(process.foreground.is_none());
-        assert!(process.foreground_program().is_none());
+        for last_exit in [
+            r#"{"exit_code":0}"#,
+            // A signal ended it.
+            r#"{"exit_code":-1,"error":"signal: killed"}"#,
+        ] {
+            let answer = format!(r#"{{"last_exit":{last_exit},"home":"/Users/u"}}"#);
+            let process: TerminalProcess = serde_json::from_str(&answer).unwrap();
+            assert!(process.foreground.is_none(), "{answer}");
+            assert!(process.foreground_program().is_none(), "{answer}");
+        }
+    }
+
+    /// Should Rex report a foreground process once the block's program has
+    /// exited, it's kept.
+    #[test]
+    fn a_block_whose_program_exited_keeps_a_foreground_rex_reports() {
+        let process: TerminalProcess = serde_json::from_str(
+            r#"{"last_exit":{"exit_code":0},"foreground":{"pid":7,"name":"zsh"},"home":"/Users/u"}"#,
+        )
+        .unwrap();
+        assert_eq!(process.foreground.map(|foreground| foreground.pid), Some(7));
     }
 
     /// While the block's program runs (`last_exit` is null or absent), a
@@ -625,10 +652,26 @@ mod tests {
             r#"{"last_exit":null,"home":"/Users/u"}"#,
             r#"{"home":"/Users/u"}"#,
         ] {
-            let error = serde_json::from_str::<TerminalProcess>(answer).unwrap_err();
+            let error = serde_json::from_str::<TerminalProcess>(answer)
+                .unwrap_err()
+                .to_string();
+            // Named for what's wrong, not as serde's missing field.
             assert!(
-                error.to_string().contains("foreground"),
+                error.contains("foreground") && error.contains("running"),
                 "{answer}: {error}"
+            );
+        }
+    }
+
+    /// Only the shape Rex documents (`{"exit_code": <n>}`) says the program
+    /// exited, so a changed shape can't pass a block without a foreground.
+    #[test]
+    fn a_last_exit_rexurrect_does_not_understand_is_unexpected_output() {
+        for last_exit in ["{}", "false", "0", r#""""#, r#"{"exit_code":"0"}"#] {
+            let answer = format!(r#"{{"last_exit":{last_exit},"home":"/Users/u"}}"#);
+            assert!(
+                serde_json::from_str::<TerminalProcess>(&answer).is_err(),
+                "{answer}"
             );
         }
     }

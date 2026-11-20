@@ -16,9 +16,10 @@ const REXURRECT: &str = "rexurrect";
 /// The command line of the program in the foreground of the block whose
 /// terminal `process` method answered `process`, as restore would type it
 /// (see [`zsh_line`]), or `None` while the block's own shell, or
-/// rexurrect, is in the foreground, or if the program's arguments can't be
-/// read or typed. The arguments come from the kernel: the terminal `process`
-/// method reports none.
+/// rexurrect, is in the foreground, if nothing is (as once the block's
+/// program has exited), or if the program's arguments can't be read or
+/// typed. The arguments come from the kernel: the terminal `process` method
+/// reports none.
 pub fn foreground_command(process: &TerminalProcess) -> Result<Option<String>> {
     match process.foreground_program() {
         Some(program) if !program.names().any(|name| name == REXURRECT) => command_line(program),
