@@ -415,13 +415,13 @@ mod tests {
     #[test]
     fn a_command_block_running_a_listed_program_by_argv0_is_listed() {
         let claude = TerminalProcess {
-            foreground: ProcessInfo {
+            foreground: Some(ProcessInfo {
                 pid: 1,
                 name: "2.1.309".to_string(),
                 invoked_path: Some("/home/u/.local/bin/claude".into()),
                 argv0: Some("claude".to_string()),
                 cwd: None,
-            },
+            }),
             ancestors: Vec::new(),
             home: "/home/u".into(),
         };

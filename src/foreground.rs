@@ -171,13 +171,13 @@ mod tests {
     #[test]
     fn rexurrect_as_a_blocks_first_process_is_not_its_last_command() {
         let process = TerminalProcess {
-            foreground: ProcessInfo {
+            foreground: Some(ProcessInfo {
                 pid: 1,
                 name: REXURRECT.to_string(),
                 invoked_path: None,
                 argv0: Some(REXURRECT.to_string()),
                 cwd: None,
-            },
+            }),
             ancestors: Vec::new(),
             home: "/home/u".into(),
         };

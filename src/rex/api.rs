@@ -12,6 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
 use crate::timestamp::Timestamp;
@@ -267,21 +268,52 @@ pub struct TerminalPwd {
     pub pwd: Option<String>,
 }
 
-/// The terminal `process` method. Rex always reports `foreground` and
-/// `home`, so they're required: without them a save would quietly lose last
-/// commands and working directories.
+/// The terminal `process` method. Rex always reports `home`, and reports
+/// `foreground` until the block's program exits, so both are required
+/// otherwise: without them a save would quietly lose last commands and
+/// working directories.
 #[derive(Debug, Deserialize)]
+#[serde(try_from = "ProcessAnswer")]
 pub struct TerminalProcess {
     /// The process in the terminal's foreground: the block's shell while it's
-    /// idle, otherwise the program it's running.
-    pub foreground: ProcessInfo,
+    /// idle, otherwise the program it's running. `None` once the block's
+    /// program has exited and the block stays open (`--keep-open`).
+    pub foreground: Option<ProcessInfo>,
     /// The foreground process's ancestors, nearest first, ending with `login`.
     /// Rex leaves it out when the foreground process is the block's first
     /// (a command it started without `login`).
-    #[serde(default)]
     pub ancestors: Vec<ProcessInfo>,
     /// The user's home directory.
     pub home: PathBuf,
+}
+
+/// The `process` answer as Rex sends it.
+#[derive(Deserialize)]
+struct ProcessAnswer {
+    #[serde(default)]
+    foreground: Option<ProcessInfo>,
+    #[serde(default)]
+    ancestors: Vec<ProcessInfo>,
+    home: PathBuf,
+    /// How the block's program exited: `null` while it runs.
+    #[serde(default)]
+    last_exit: Option<IgnoredAny>,
+}
+
+impl TryFrom<ProcessAnswer> for TerminalProcess {
+    type Error = &'static str;
+
+    /// Only a block whose program has exited may leave out `foreground`.
+    fn try_from(answer: ProcessAnswer) -> Result<Self, Self::Error> {
+        if answer.foreground.is_none() && answer.last_exit.is_none() {
+            return Err("missing field `foreground`");
+        }
+        Ok(TerminalProcess {
+            foreground: answer.foreground,
+            ancestors: answer.ancestors,
+            home: answer.home,
+        })
+    }
 }
 
 impl TerminalProcess {
@@ -298,12 +330,13 @@ impl TerminalProcess {
     /// [`ProcessInfo::is_shell`]): a command block has no shell, and its
     /// command is its foreground program.
     pub fn foreground_program(&self) -> Option<&ProcessInfo> {
+        let foreground = self.foreground.as_ref()?;
         let is_program = if self.ancestors.is_empty() {
-            !self.foreground.is_shell()
+            !foreground.is_shell()
         } else {
             self.ancestors.iter().any(|ancestor| ancestor.name != LOGIN)
         };
-        is_program.then_some(&self.foreground)
+        is_program.then_some(foreground)
     }
 }
 
@@ -505,7 +538,7 @@ mod tests {
     /// A block whose first process, `foreground`, is in its foreground.
     fn first_process(foreground: ProcessInfo) -> TerminalProcess {
         TerminalProcess {
-            foreground,
+            foreground: Some(foreground),
             ancestors: Vec::new(),
             home: PathBuf::from("/home/u"),
         }
@@ -572,5 +605,31 @@ mod tests {
         assert!(process.foreground_program().is_none());
         process.ancestors.insert(0, process_info("zsh", "-zsh"));
         assert!(process.foreground_program().is_some());
+    }
+
+    /// A block whose program exited and that stays open (`--keep-open`):
+    /// Rex reports no foreground process, and a save must not fail on it.
+    #[test]
+    fn a_block_whose_program_exited_has_no_foreground_program() {
+        let process: TerminalProcess =
+            serde_json::from_str(r#"{"last_exit":{"exit_code":0},"home":"/Users/u"}"#).unwrap();
+        assert!(process.foreground.is_none());
+        assert!(process.foreground_program().is_none());
+    }
+
+    /// While the block's program runs (`last_exit` is null or absent), a
+    /// missing `foreground` is still an answer rexurrect doesn't understand.
+    #[test]
+    fn a_running_block_without_a_foreground_is_unexpected_output() {
+        for answer in [
+            r#"{"last_exit":null,"home":"/Users/u"}"#,
+            r#"{"home":"/Users/u"}"#,
+        ] {
+            let error = serde_json::from_str::<TerminalProcess>(answer).unwrap_err();
+            assert!(
+                error.to_string().contains("foreground"),
+                "{answer}: {error}"
+            );
+        }
     }
 }

@@ -59,7 +59,7 @@ fn percent_decode(bytes: &[u8]) -> Vec<u8> {
 fn process_directory(process: &TerminalProcess) -> PathBuf {
     process
         .foreground
-        .cwd
-        .clone()
+        .as_ref()
+        .and_then(|foreground| foreground.cwd.clone())
         .unwrap_or_else(|| process.home.clone())
 }
