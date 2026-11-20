@@ -186,6 +186,85 @@ fn a_command_block_restores_with_its_command_line_typed_not_run() {
     );
 }
 
+/// A command block that stays open once its program exits (`--keep-open`),
+/// running `cat` in `dir`: Ctrl-D ends it.
+fn kept_open_cat(server: &Server, label: &str, dir: &Path) -> FixtureSession {
+    let fixture = server.create_session(
+        label,
+        &[window(block(json!({
+            "cwd": dir.to_str().unwrap(),
+            "command": ["cat"],
+            "exit": { "on_completion": false },
+        })))],
+    );
+    server.wait_for_foreground(&fixture.id, fixture.block_ids()[0], "cat");
+    fixture
+}
+
+/// Ends the kept-open block's program and waits until Rex reports it
+/// exited: no foreground, and no shell to report a working directory.
+fn end_kept_open(server: &Server, session_id: &str, block_id: &str) {
+    server.write(session_id, block_id, "\u{4}");
+    wait_for(&format!("{block_id}'s program to exit"), || {
+        let process = server.block_method(session_id, block_id, "process", json!({}));
+        process["last_exit"].is_object().then_some(())
+    });
+    assert_eq!(server.pwd(session_id, block_id), None);
+}
+
+/// #104: once its program exits, Rex reports neither a foreground nor a
+/// working directory for a kept-open command block. It keeps the directory
+/// its program was last seen in, alongside its last command, rather than
+/// coming back in home.
+#[test]
+fn a_kept_open_command_block_whose_program_exited_comes_back_where_its_program_ran() {
+    let env = TestEnv::new();
+    let server = env.start_server();
+    let a = env.mkdir("a");
+    let fixture = kept_open_cat(&server, "zz-exited", &a);
+    let block = fixture.block_ids()[0];
+    env.save(&server);
+
+    end_kept_open(&server, &fixture.id, block);
+    env.save(&server);
+    server.kill_session(&fixture.id);
+    env.restore(&server);
+
+    let restored = server.the_session_labelled("zz-exited");
+    let block = server.block_ids(&restored).remove(0);
+    server.wait_for_typed(&restored, &block, "cat");
+    server.wait_for_pwd_eq(&restored, &block, &a.canonicalize().unwrap());
+}
+
+/// A default last command stored before #104 is the command alone: with no
+/// directory to keep, the block comes back in home, as it did.
+#[test]
+fn a_kept_open_command_block_whose_default_has_no_directory_comes_back_in_home() {
+    let env = TestEnv::new();
+    let server = env.start_server();
+    let fixture = kept_open_cat(&server, "zz-exited", &env.mkdir("a"));
+    let block = fixture.block_ids()[0];
+    end_kept_open(&server, &fixture.id, block);
+    let process = server.block_method(&fixture.id, block, "process", json!({}));
+    let home = Path::new(process["home"].as_str().unwrap())
+        .canonicalize()
+        .unwrap();
+    std::fs::write(
+        env.state_dir().join("default-commands.json"),
+        json!({ block: "cat" }).to_string(),
+    )
+    .unwrap();
+
+    env.save(&server);
+    server.kill_session(&fixture.id);
+    env.restore(&server);
+
+    let restored = server.the_session_labelled("zz-exited");
+    let block = server.block_ids(&restored).remove(0);
+    server.wait_for_typed(&restored, &block, "cat");
+    server.wait_for_pwd_eq(&restored, &block, &home);
+}
+
 /// #42 as reported: Claude Code is installed as a `claude` symlink to an
 /// executable named for its version, so Rex names the block's first process
 /// `2.1.309`. Only the name it was run by says what it is.
@@ -315,11 +394,16 @@ fn a_block_without_a_recorder_file_sitting_at_a_prompt_restores_with_an_empty_pr
     }
 }
 
-/// `block_id`'s default last command in `default-commands.json`, if any.
+/// `block_id`'s default last command in `default-commands.json`, if any:
+/// the command alone, or with the directory it ran in.
 fn default_command(env: &TestEnv, block_id: &str) -> Option<String> {
     let text = std::fs::read_to_string(env.state_dir().join("default-commands.json")).ok()?;
     let defaults: serde_json::Value = serde_json::from_str(&text).unwrap();
-    defaults[block_id].as_str().map(str::to_string)
+    let entry = &defaults[block_id];
+    entry
+        .as_str()
+        .or_else(|| entry["command"].as_str())
+        .map(str::to_string)
 }
 
 /// Every last command in every snapshot.

@@ -37,7 +37,7 @@ A block running an interactive terminal shell.
 _Avoid_: terminal block
 
 **Command block**:
-A block Rex started with a command rather than a shell: the command is its first process, and no shell runs in it. It has a shell block's flavor and is saved like one, and comes back as a shell block with the command as its last command.
+A block Rex started with a command rather than a shell: the command is its first process, and no shell runs in it. It has a shell block's flavor and is saved like one, and comes back as a shell block with the command as its last command. One that stays open after its command exits (`--keep-open`) has no foreground process and no shell to report a working directory, so it keeps the directory its command was last seen running in.
 
 **Remote block**:
 A block that lives on a host rather than on the local server.
@@ -60,7 +60,7 @@ _Avoid_: name, title
 The label Rex generates for a window or block nobody labeled: `Window` plus the last 8 hex characters of the window's ID, or `shell` for a shell block. A block whose label was cleared gets `Block` plus the last 8 hex characters of its ID, also a default label. Any other label is user-set. Rex also generates labels for sessions (random word pairs such as `amber-ridge`), but those can't be told apart from user-set ones, so a session never has a default label.
 
 **Working directory**:
-The directory a shell block's shell was last in.
+The directory a shell block's shell was last in; for a command block, the directory its command was last seen running in.
 _Avoid_: cwd, pwd, last directory
 
 ### Saving

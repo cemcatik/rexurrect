@@ -118,10 +118,17 @@ pub struct CapturedSession {
     /// One entry per block of `saved`, window by window in layout order: the
     /// block whose scrollback to save, or `None` for a block that gets none.
     scrollback: Vec<Option<ScrollbackSource>>,
-    /// The programs the capture saw in its blocks' foregrounds, as (block
-    /// ID, command line): each is its block's default last command from now
-    /// on.
-    pub programs_seen: Vec<(String, String)>,
+    /// The programs the capture saw in its blocks' foregrounds: each is its
+    /// block's default last command from now on.
+    pub programs_seen: Vec<ProgramSeen>,
+}
+
+/// A program the capture saw in a block's foreground.
+pub struct ProgramSeen {
+    pub block_id: String,
+    pub command_line: String,
+    /// Where it ran, if Rex reported it.
+    pub directory: Option<PathBuf>,
 }
 
 impl CapturedSession {
@@ -254,7 +261,7 @@ struct Capture<'a> {
     /// [`CapturedSession::scrollback`] so far.
     scrollback: Vec<Option<ScrollbackSource>>,
     /// [`CapturedSession::programs_seen`] so far.
-    programs_seen: Vec<(String, String)>,
+    programs_seen: Vec<ProgramSeen>,
 }
 
 impl Capture<'_> {
@@ -365,7 +372,13 @@ impl Capture<'_> {
         let process = rex.terminal_process(session_id, block_id)?;
         let saved = SavedBlock {
             label,
-            working_directory: workdir::working_directory(rex, session_id, block_id, &process)?,
+            working_directory: workdir::working_directory(
+                rex,
+                session_id,
+                block_id,
+                &process,
+                self.context.defaults.directory(block_id),
+            )?,
             last_command: self.last_command(block_id, recorded, &process)?,
             scrollback: None,
             resume: self.resume(block_id, &process)?,
@@ -402,8 +415,11 @@ impl Capture<'_> {
             Recorded::NoLastCommand => None,
             Recorded::Nothing => match foreground::foreground_command(process)? {
                 Some(program) => {
-                    self.programs_seen
-                        .push((block_id.to_string(), program.clone()));
+                    self.programs_seen.push(ProgramSeen {
+                        block_id: block_id.to_string(),
+                        command_line: program.clone(),
+                        directory: process.foreground_program().and_then(|p| p.cwd.clone()),
+                    });
                     Some(program)
                 }
                 None => self.context.defaults.get(block_id).map(str::to_string),
