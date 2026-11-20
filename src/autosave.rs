@@ -37,13 +37,13 @@ impl Default for InstallOptions {
 
 pub fn run(command: &AutosaveCommand) -> Result<ExitCode> {
     match command {
-        AutosaveCommand::Install(options) => install(options),
+        AutosaveCommand::Install(options) => install(options).map(|()| ExitCode::SUCCESS),
         AutosaveCommand::Uninstall => uninstall(),
     }
 }
 
 /// `autosave install`, and the first step of `setup`.
-pub fn install(options: &InstallOptions) -> Result<ExitCode> {
+pub fn install(options: &InstallOptions) -> Result<()> {
     let program = std::env::current_exe().with_context(|| "finding rexurrect's own path")?;
     let state = StateDir::from_env()?;
     let job = Job {
@@ -68,7 +68,7 @@ pub fn install(options: &InstallOptions) -> Result<ExitCode> {
         job.env[CONFIG_VAR],
         Log::new(&state).path().display(),
     );
-    Ok(ExitCode::SUCCESS)
+    Ok(())
 }
 
 /// The autosave job's environment. A scheduler starts its jobs with
