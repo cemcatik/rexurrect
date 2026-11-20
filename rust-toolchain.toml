@@ -1,0 +1,8 @@
+# The Rust that builds and checks rexurrect, locally and in CI. Pinned, so a
+# new stable release can't fail CI on pull requests that didn't change it:
+# Dependabot proposes each bump as its own pull request. The minimum supported
+# version is `rust-version` in Cargo.toml, which CI checks separately.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

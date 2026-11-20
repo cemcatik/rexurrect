@@ -17,3 +17,11 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+
+  # The pinned toolchain in rust-toolchain.toml.
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
