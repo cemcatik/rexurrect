@@ -210,8 +210,12 @@ fn save_snapshot(
     // Remembered whether or not a snapshot is written: they're what the
     // blocks were seen running.
     let mut remembered = false;
-    for (block_id, program) in &programs_seen {
-        remembered |= context.defaults.set(block_id, program);
+    for seen in &programs_seen {
+        remembered |= context.defaults.set(
+            &seen.block_id,
+            &seen.command_line,
+            seen.directory.as_deref(),
+        );
     }
     if remembered {
         context

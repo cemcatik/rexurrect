@@ -244,9 +244,11 @@ rexurrect knows Rex's copy of a session by its blocks: Rex keeps their IDs, so a
 that's in a snapshot taken before the server started can only have been carried over by Rex.
 
 A block that can't come back as it was still comes back as a shell, so the layout around it
-stays intact. A block whose directory no longer exists opens in your home directory. A block
-that isn't a shell block, a block on another host, and a window whose blocks have all floated
-come back as a plain shell in your home directory. Floating blocks aren't saved.
+stays intact. A block whose directory no longer exists opens in your home directory. A command
+block kept open after its program exited (`rex run --keep-open`) opens where a save last saw
+that program running. A block that isn't a shell block, a block on another host, and a window
+whose blocks have all floated come back as a plain shell in your home directory. Floating blocks
+aren't saved.
 
 Each restored block's last command is typed at its prompt but **never run**: press Enter to
 resume, edit it, or clear it. Only single-line commands are typed; a block with no last
@@ -373,7 +375,7 @@ two minutes.
 `recorder/` holds one file per block with the last command the recorder recorded, rewritten
 each time the shell's prompt comes back; only recorders write there. `default-commands.json`
 holds each block's last command when there's no recorder file: the last program a save saw
-running in it, else the command restore typed there.
+running in it, with the directory it ran in, else the command restore typed there.
 `resume/` holds one file per block with the resume state its program reported through
 `rexurrect report` (see [Resuming programs](#resuming-programs)); only `report` writes there, and
 `report-failures.json` remembers which of its failures it has logged.

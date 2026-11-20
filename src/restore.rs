@@ -676,7 +676,7 @@ impl Creating<'_> {
             let mut changed = false;
             for (block_id, input) in block_ids.iter().zip(&inputs) {
                 if let Some(input) = input {
-                    changed |= self.defaults.set(block_id, input.command());
+                    changed |= self.defaults.set(block_id, input.command(), None);
                 }
             }
             if changed {
