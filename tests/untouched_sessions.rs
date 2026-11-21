@@ -24,17 +24,11 @@ fn shell_in_home() -> Layout {
     block(json!({}))
 }
 
-fn kill_every_session(server: &Server) {
-    for session in server.sessions() {
-        server.kill_session(&session.id);
-    }
-}
-
 /// Saves, kills every live session, restores, and returns the labels of the
 /// sessions that came back: the saved ones.
 fn labels_saved(env: &TestEnv, server: &Server) -> Vec<String> {
     env.save(server);
-    kill_every_session(server);
+    server.kill_every_session();
     env.restore(server);
     server.sorted_labels()
 }
@@ -188,7 +182,7 @@ fn save_on_an_emptied_server_instance_holding_only_untouched_sessions_saves_no_s
         listed.lines().next().unwrap().ends_with("(no sessions)"),
         "{listed}"
     );
-    kill_every_session(&server);
+    server.kill_every_session();
     env.restore(&server);
     assert_eq!(server.sessions(), [], "zz-closed came back");
 }

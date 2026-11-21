@@ -73,14 +73,14 @@ _Avoid_: backup, save file
 The most recently written snapshot, and the one restore uses unless told otherwise.
 
 **Empty server**:
-A server with no live sessions worth saving: none at all, or only untouched ones. On an emptied server instance, saving from one records that nothing is live, so the next start restores nothing. On any other server instance (an unrestored one, or one whose restore failed and that nothing has been saved from since), saving from one never replaces the latest snapshot.
+A server with no live sessions worth saving: none at all, or only untouched or excluded ones. On an emptied server instance, saving from one records that nothing is live, so the next start restores nothing. On any other server instance (an unrestored one, or one whose restore failed and that nothing has been saved from since), saving from one never replaces the latest snapshot.
 
 **Emptied server instance**:
 A server instance that's an empty server because the user closed its sessions: rexurrect restored into it, at least in part, or has saved from it since a failed restore. An empty server on any other instance is one the user hasn't worked in yet.
 _Avoid_: closed server, cleared server
 
 **Excluded session**:
-A session whose label matches a pattern in `exclude_sessions`: one another tool makes and keeps up itself. Save doesn't save it, and restore neither creates nor replaces it (ADR-0010).
+A session whose label, saved or live, matches a pattern in `exclude_sessions`: one another tool makes and keeps up itself. Save doesn't save it, and restore neither creates it nor replaces a live session of its lineage (ADR-0010).
 _Avoid_: ignored session (ignoring is what the recorder does to commands), managed session
 
 **Untouched session**:
@@ -115,7 +115,7 @@ _Avoid_: existing session, current session
 A session as recorded in a snapshot.
 
 **Restored session**:
-A live session that restore created from a saved session. It belongs to the saved session's lineage, whatever it's labeled.
+A live session that restore created from a saved session. It belongs to the saved session's lineage, whatever it's labelled.
 
 **Lineage**:
 A session plus every session restore has created from it, across any number of restarts. Only one session of a lineage is ever live.
@@ -129,7 +129,7 @@ _Avoid_: lineage (that's the chain of sessions), lineage file
 The first two minutes after restore creates a session, while its blocks' shells may still be starting. A save in it saves the session's blocks as restore created them, except a block the recorder has recorded a command in since.
 
 **Skipped session**:
-A saved session that restore doesn't create because a session of its lineage is already live. A live session with the same label but a different lineage doesn't count.
+A saved session that restore doesn't create because a session of its lineage is already live, or because it's an excluded session (reported as excluded, and counted with the skipped ones). A live session with the same label but a different lineage doesn't count.
 
 **Carried-over session**:
 A live session Rex brought back by itself when its server started, keeping its ID and its blocks' IDs but not their scrollback or programs. rexurrect knows one by a block that's also in a snapshot taken before the server instance started.
@@ -140,7 +140,7 @@ A live session of a saved session's lineage that restore closed after creating t
 _Avoid_: forced session, overwritten session
 
 **Unrestored server instance**:
-A server instance rexurrect hasn't restored into yet. Save restores before saving from one, so a freshly started server never replaces the latest snapshot. If it holds carried-over sessions, save neither restores nor saves: it leaves them for auto-restore or `restore --force` to replace.
+A server instance rexurrect hasn't restored into yet. Save restores before saving from one, so a freshly started server never replaces the latest snapshot. If it holds carried-over sessions other than excluded ones, save neither restores nor saves: it leaves them for auto-restore or `restore --force` to replace.
 
 **Auto-restore**:
 A restore that runs by itself once per server instance, as soon as the server is ready.

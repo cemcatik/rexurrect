@@ -18,7 +18,9 @@ use crate::log::{self, Log};
 use crate::recorder::RecorderFiles;
 use crate::resume::{Input, Resuming};
 use crate::rex::Rex;
-use crate::rex::api::{CreateFloatingLayer, CreatedSession, NewLayer, ServerStatus};
+use crate::rex::api::{
+    CreateFloatingLayer, CreatedSession, NewLayer, ServerStatus, SessionSummary,
+};
 use crate::scrollback::Replay;
 use crate::settings::{self, BLOCK_VAR};
 use crate::snapshot::{SavedSession, Snapshot};
@@ -94,9 +96,14 @@ pub enum Outcome {
         /// of a snapshot taken before this server instance started.
         carried_over: bool,
     },
-    /// Its label is excluded (`exclude_sessions`, ADR-0010): restore
-    /// neither creates it nor replaces a live session of its lineage.
-    Excluded { label: String },
+    /// It's an excluded session (`exclude_sessions`, ADR-0010): restore
+    /// neither creates it nor replaces the live session of its lineage.
+    Excluded {
+        label: String,
+        /// The live session's label, when that's the excluded one and the
+        /// saved label isn't: a tool took the session over and relabelled it.
+        live_label: Option<String>,
+    },
     Failed {
         label: String,
         error: String,
@@ -270,9 +277,17 @@ impl RestoreReport {
                     live_session_id,
                     ..
                 } => writeln!(out, "skipped  {label}  (live as {live_session_id})")?,
-                Outcome::Excluded { label } => {
-                    writeln!(out, "excluded  {label}  (exclude_sessions)")?
-                }
+                Outcome::Excluded {
+                    label,
+                    live_label: None,
+                } => writeln!(out, "excluded  {label}  (exclude_sessions)")?,
+                Outcome::Excluded {
+                    label,
+                    live_label: Some(live_label),
+                } => writeln!(
+                    out,
+                    "excluded  {label}  (live label {live_label}, exclude_sessions)"
+                )?,
                 Outcome::Failed { label, error, .. } => writeln!(out, "failed   {label}: {error}")?,
             }
         }
@@ -371,12 +386,13 @@ pub fn restore(
 }
 
 /// Whether the server instance `server` describes holds a session Rex
-/// carried over from the latest snapshot (see [`carried_over_sessions`]).
+/// carried over from the latest snapshot that isn't `excluded` (see
+/// [`carried_over_sessions`]).
 pub fn holds_carried_over_session(
     rex: &Rex,
     state: &StateDir,
     server: &ServerStatus,
-    config: &Config,
+    excluded: &ExcludedSessions,
 ) -> Result<bool> {
     let Some((_, snapshot)) = SnapshotStore::new(state).read_latest()? else {
         return Ok(false);
@@ -386,7 +402,7 @@ pub fn holds_carried_over_session(
         rex,
         &snapshot,
         server,
-        &config.exclude_sessions,
+        excluded,
         live.iter().map(|s| s.session_id.as_str()),
     )?;
     Ok(!carried_over.is_empty())
@@ -403,8 +419,9 @@ fn taken_in_an_earlier_instance(snapshot: &Snapshot, server: &ServerStatus) -> b
 /// also in `snapshot`, taken before the instance started. Block IDs are
 /// never reused, so only Rex's own restore brings one into a later
 /// instance. Looks at none of them when `snapshot` was taken in this one.
-/// The blocks of `excluded` saved sessions, from a snapshot taken before
-/// they were excluded, don't count: rexurrect leaves those sessions be.
+/// Neither the blocks of `excluded` saved sessions, from a snapshot taken
+/// before they were excluded, nor live sessions with an excluded label
+/// count: rexurrect leaves those sessions be.
 fn carried_over_sessions<'a>(
     rex: &Rex,
     snapshot: &Snapshot,
@@ -430,7 +447,7 @@ fn carried_over_sessions<'a>(
         let view = rex
             .view_session(session_id)
             .with_context(|| format!("looking for sessions Rex carried over: {session_id}"))?;
-        if view.block_ids().any(|block_id| saved.contains(block_id)) {
+        if !excluded.contains(&view.label) && view.block_ids().any(|id| saved.contains(id)) {
             carried_over.insert(session_id.to_string());
         }
     }
@@ -473,15 +490,15 @@ fn restore_sessions(
     let selected = selected_sessions(&snapshot, options)?;
     let live_sessions = rex.list_sessions()?;
     let mut lineages = LineageMap::load(state)?;
-    let mut live: HashMap<Lineage, String> = live_sessions
+    let mut live: HashMap<Lineage, SessionSummary> = live_sessions
         .iter()
-        .map(|s| (lineages.lineage_of(&s.session_id), s.session_id.clone()))
+        .map(|s| (lineages.lineage_of(&s.session_id), s.clone()))
         .collect();
     // The live sessions of the selected saved sessions' lineages: the ones
     // restore skips, or with `force` replaces.
     let matched: Vec<String> = selected
         .iter()
-        .filter_map(|saved| live.get(&saved.lineage).cloned())
+        .filter_map(|saved| live.get(&saved.lineage).map(|s| s.session_id.clone()))
         .collect();
     let matched = || matched.iter().map(String::as_str);
     let (carried_over, own_session) = if options.force {
@@ -520,13 +537,24 @@ fn restore_sessions(
         dry_run: options.dry_run,
         ..RestoreReport::default()
     };
+    let excluded = &config.exclude_sessions;
     for saved in selected {
         let label = saved.label.clone();
-        if config.exclude_sessions.contains(&label) {
-            report.outcomes.push(Outcome::Excluded { label });
+        let live_session = live.get(&saved.lineage);
+        // Excluded by its saved label, or by its live one, which a tool may
+        // have given it since it was saved.
+        let saved_excluded = excluded.contains(&label);
+        let relabelled = live_session
+            .map(|s| &s.label)
+            .filter(|live_label| !saved_excluded && excluded.contains(live_label));
+        if saved_excluded || relabelled.is_some() {
+            let live_label = relabelled.cloned();
+            report
+                .outcomes
+                .push(Outcome::Excluded { label, live_label });
             continue;
         }
-        let replacing = match live.get(&saved.lineage) {
+        let replacing = match live_session.map(|s| &s.session_id) {
             None => None,
             Some(live_session_id) if options.force => Some(live_session_id.clone()),
             Some(live_session_id) => {
@@ -550,7 +578,8 @@ fn restore_sessions(
         }
         let (outcome, created) = creating.create(saved)?;
         if let Some(session_id) = created {
-            live.insert(saved.lineage.clone(), session_id);
+            let label = saved.label.clone();
+            live.insert(saved.lineage.clone(), SessionSummary { session_id, label });
         }
         report.outcomes.push(match replacing {
             Some(live_session_id) => {

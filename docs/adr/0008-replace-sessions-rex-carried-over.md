@@ -21,3 +21,4 @@ Rex builds with API revision 9 bring a server's sessions back by themselves when
 - Rex starts a new shell in each block it carries over, and the zsh recorder rewrites the block's record at that shell's first prompt. So restoring from a snapshot taken in an earlier server instance ignores records written after the instance started when it asks whether a program exited after the save (#60): otherwise no replaced block would resume its program.
 - If Rex refuses to close its copy, both sessions stay live, against lineage's one live session (ADR-0001). That's left as a note on the replaced session rather than a failure, for the user to close by hand.
 - A Rex build that doesn't carry sessions over behaves as before: there's nothing live to replace.
+- Narrowed by ADR-0010: excluded sessions are left to the tools that make them, never replaced, even with `--force`, and save's back-off ignores them.

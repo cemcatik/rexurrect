@@ -329,6 +329,13 @@ impl Server {
         self.call("session.destroy", &json!({ "session_id": session_id }));
     }
 
+    /// Kills every live session, leaving an empty server.
+    pub fn kill_every_session(&self) {
+        for session in self.sessions() {
+            self.kill_session(&session.id);
+        }
+    }
+
     pub fn rename_session(&self, session_id: &str, label: &str) {
         self.call(
             "session.set_label",

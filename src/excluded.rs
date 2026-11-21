@@ -12,8 +12,15 @@ pub struct ExcludedSessions {
 }
 
 impl ExcludedSessions {
-    pub fn new(patterns: Vec<String>) -> ExcludedSessions {
-        ExcludedSessions { patterns }
+    /// `None` if a pattern has no text other than `*`: `"*"` would exclude
+    /// every session, so that each save on a restored server instance
+    /// replaced the latest snapshot with an empty one (ADR-0009), and `""`
+    /// names none.
+    pub fn new(patterns: Vec<String>) -> Option<ExcludedSessions> {
+        patterns
+            .iter()
+            .all(|pattern| pattern.chars().any(|c| c != '*'))
+            .then_some(ExcludedSessions { patterns })
     }
 
     #[cfg(test)]
@@ -47,7 +54,7 @@ fn matches(pattern: &str, text: &str) -> bool {
             None => return false,
         }
     }
-    rest.len() >= last.len() && rest.ends_with(last)
+    rest.ends_with(last)
 }
 
 #[cfg(test)]
@@ -55,6 +62,10 @@ mod tests {
     use super::*;
 
     fn excluded(patterns: &[&str]) -> ExcludedSessions {
+        new(patterns).expect("patterns with text")
+    }
+
+    fn new(patterns: &[&str]) -> Option<ExcludedSessions> {
         ExcludedSessions::new(patterns.iter().map(|p| p.to_string()).collect())
     }
 
@@ -83,8 +94,16 @@ mod tests {
         assert!(!sessions.contains("a-c-b"));
         // The last part can't reuse characters a middle part matched.
         assert!(!sessions.contains("ab"));
-        assert!(excluded(&["*"]).contains(""));
+        assert!(excluded(&["x*"]).contains("x"));
         assert!(!excluded(&["xy*yx"]).contains("xyx"));
+    }
+
+    #[test]
+    fn a_pattern_needs_text_other_than_a_star() {
+        for patterns in [&["*"][..], &["**"], &[""], &["T3 Code", "*"]] {
+            assert!(new(patterns).is_none(), "{patterns:?}");
+        }
+        assert!(new(&["*-scratch", "T3 Code"]).is_some());
     }
 
     #[test]

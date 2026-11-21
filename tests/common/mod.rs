@@ -28,7 +28,8 @@
 //!
 //! Shared steps and checks: [`TestEnv::saved_on_an_earlier_server`] (a
 //! snapshot taken before a restart), [`TestEnv::listed`],
-//! [`Server::sorted_labels`], [`Server::assert_empty_prompt`].
+//! [`Server::sorted_labels`], [`Server::kill_every_session`],
+//! [`Server::assert_empty_prompt`].
 //!
 //! Safety: every child process that can reach Rex gets an environment built
 //! from an allowlist, so `REX_BLOCK`, `REX_SESSION`, the real `REX_SERVER` and
@@ -46,8 +47,10 @@
 //!   always uses the real `rex`, see [`server::rex_bin`]); a slow one:
 //!   [`stub::slow_rex`]; a stand-in for (R)?ex, the Perl tool also packaged
 //!   as `rex`: [`perl_rex`]; one that records its arguments:
-//!   [`RecordingRex`]. Auto-restore runs the `rex` its server runs, not
-//!   the one on `PATH`: start that server with
+//!   [`RecordingRex`]; one that plays Rex's restart, a new server
+//!   instance with the sessions still live: [`RexStub::restarted_at`],
+//!   usually at [`LATER`]. Auto-restore runs the `rex` its server runs,
+//!   not the one on `PATH`: start that server with
 //!   `.shown_as(stub.dir().join("rex"))`.
 //! - an executable to copy, rename or run through a symlink:
 //!   [`build_sleeper`], a test-built program that sleeps;
@@ -85,4 +88,4 @@ pub use stand_in::{
     build_stand_in, report, restarted, restarted_after, restored_with_typed, run_and_wait, running,
     runs, stand_in_bin, wait_for_runs, write_session_vim,
 };
-pub use stub::{RecordingRex, RexStub, perl_rex};
+pub use stub::{LATER, RecordingRex, RexStub, perl_rex};
