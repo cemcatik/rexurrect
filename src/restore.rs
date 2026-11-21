@@ -18,7 +18,9 @@ use crate::log::{self, Log};
 use crate::recorder::RecorderFiles;
 use crate::resume::{Input, Resuming};
 use crate::rex::Rex;
-use crate::rex::api::{CreateFloatingLayer, CreatedSession, NewLayer, ServerStatus};
+use crate::rex::api::{
+    CreateFloatingLayer, CreatedSession, NewLayer, ServerStatus, SessionSummary,
+};
 use crate::scrollback::Replay;
 use crate::settings::{self, BLOCK_VAR};
 use crate::snapshot::{SavedSession, Snapshot};
@@ -94,8 +96,9 @@ pub enum Outcome {
         /// of a snapshot taken before this server instance started.
         carried_over: bool,
     },
-    /// Its label is excluded (`exclude_sessions`, ADR-0010): restore
-    /// neither creates it nor replaces a live session of its lineage.
+    /// Its label, or the live session of its lineage's, is excluded
+    /// (`exclude_sessions`, ADR-0010): restore neither creates it nor
+    /// replaces that live session. `label` is the one excluded.
     Excluded { label: String },
     Failed {
         label: String,
@@ -371,12 +374,13 @@ pub fn restore(
 }
 
 /// Whether the server instance `server` describes holds a session Rex
-/// carried over from the latest snapshot (see [`carried_over_sessions`]).
+/// carried over from the latest snapshot that isn't `excluded` (see
+/// [`carried_over_sessions`]).
 pub fn holds_carried_over_session(
     rex: &Rex,
     state: &StateDir,
     server: &ServerStatus,
-    config: &Config,
+    excluded: &ExcludedSessions,
 ) -> Result<bool> {
     let Some((_, snapshot)) = SnapshotStore::new(state).read_latest()? else {
         return Ok(false);
@@ -386,7 +390,7 @@ pub fn holds_carried_over_session(
         rex,
         &snapshot,
         server,
-        &config.exclude_sessions,
+        excluded,
         live.iter().map(|s| s.session_id.as_str()),
     )?;
     Ok(!carried_over.is_empty())
@@ -403,8 +407,9 @@ fn taken_in_an_earlier_instance(snapshot: &Snapshot, server: &ServerStatus) -> b
 /// also in `snapshot`, taken before the instance started. Block IDs are
 /// never reused, so only Rex's own restore brings one into a later
 /// instance. Looks at none of them when `snapshot` was taken in this one.
-/// The blocks of `excluded` saved sessions, from a snapshot taken before
-/// they were excluded, don't count: rexurrect leaves those sessions be.
+/// Neither the blocks of `excluded` saved sessions, from a snapshot taken
+/// before they were excluded, nor live sessions with an excluded label
+/// count: rexurrect leaves those sessions be.
 fn carried_over_sessions<'a>(
     rex: &Rex,
     snapshot: &Snapshot,
@@ -430,7 +435,7 @@ fn carried_over_sessions<'a>(
         let view = rex
             .view_session(session_id)
             .with_context(|| format!("looking for sessions Rex carried over: {session_id}"))?;
-        if view.block_ids().any(|block_id| saved.contains(block_id)) {
+        if !excluded.contains(&view.label) && view.block_ids().any(|id| saved.contains(id)) {
             carried_over.insert(session_id.to_string());
         }
     }
@@ -522,7 +527,8 @@ fn restore_sessions(
     };
     for saved in selected {
         let label = saved.label.clone();
-        if config.exclude_sessions.contains(&label) {
+        if let Some(label) = excluded_label(saved, &live, &live_sessions, &config.exclude_sessions)
+        {
             report.outcomes.push(Outcome::Excluded { label });
             continue;
         }
@@ -561,6 +567,25 @@ fn restore_sessions(
         });
     }
     Ok(report)
+}
+
+/// The excluded label (`exclude_sessions`, ADR-0010) that leaves `saved`
+/// unrestored: its own, or that of the live session of its lineage, which
+/// a tool may have relabelled since it was saved.
+fn excluded_label(
+    saved: &SavedSession,
+    live: &HashMap<Lineage, String>,
+    live_sessions: &[SessionSummary],
+    excluded: &ExcludedSessions,
+) -> Option<String> {
+    let live_label = live
+        .get(&saved.lineage)
+        .and_then(|id| live_sessions.iter().find(|s| &s.session_id == id))
+        .map(|s| &s.label);
+    std::iter::once(&saved.label)
+        .chain(live_label)
+        .find(|label| excluded.contains(label))
+        .cloned()
 }
 
 /// Closes the live session `live_session_id` that `outcome`, the creation

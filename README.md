@@ -351,15 +351,17 @@ Some tools make a Rex session of their own and keep it up themselves, such as
 [tr3x](https://github.com/macnason/tr3x)'s **T3 Code**: its blocks run the tool's programs, and
 the tool remembers the session by its ID. Restoring a copy of it brings those blocks back as
 shells, and the tool, finding its session gone, makes another beside it. List such sessions'
-labels in `exclude_sessions` in the [config file](#settings), each `*` matching any text, and
-rexurrect leaves them to the tool:
+labels in `exclude_sessions` in the [config file](#settings), each `*` matching any text (a
+pattern needs some other text too, so `"*"` alone is an error), and rexurrect leaves them to the
+tool:
 
 ```toml
 exclude_sessions = ["T3 Code", "T3 Code · *"]
 ```
 
 Save doesn't save them, and restore (auto-restore and `--force` too) neither creates nor replaces
-them, even from a snapshot taken before you excluded them: it prints
+them, even from a snapshot taken before you excluded them, or when the tool has taken over and
+relabelled one of your saved sessions: it prints
 `excluded  <label>  (exclude_sessions)` for each. See
 [ADR-0010](docs/adr/0010-leave-excluded-sessions-to-the-tools-that-make-them.md).
 

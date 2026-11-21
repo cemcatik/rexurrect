@@ -6,7 +6,7 @@
 //! instance as restored, and save backs off.
 //!
 //! The throwaway servers' Rex doesn't carry sessions over, so a stub
-//! ([`restarted_at`]) plays the restart: it reports a new server instance,
+//! ([`RexStub::restarted_at`]) plays the restart: it reports a new server instance,
 //! started after the snapshot was taken, while the snapshot's sessions are
 //! still live with the IDs they were saved with. That's what Rex's copies
 //! look like.
@@ -16,24 +16,8 @@ mod common;
 use common::stub::sh_quote;
 use common::*;
 
-/// A start time later than any snapshot a test takes.
-const LATER: &str = "2099-01-01T00:00:00.000000Z";
-
-/// A stub that makes the server look restarted at `started_at` (a new
-/// server instance), with init.lua run `generation` times in it: 1 at the
-/// start, more after each `rex config reload`.
-fn restarted_at(env: &TestEnv, started_at: &str, generation: u32) -> RexStub {
-    RexStub::new(env).rewrite_when("server.status", "{", &restart_sed(started_at, generation))
-}
-
-fn restart_sed(started_at: &str, generation: u32) -> String {
-    format!(
-        r#"s/"instance_id":"[^"]*"/"instance_id":"zz-carried-over-instance"/;s/"started_at":"[^"]*"/"started_at":"{started_at}"/;s/"generation":[0-9]*/"generation":{generation}/"#
-    )
-}
-
 /// Two sessions, each a shell in its own directory that has printed
-/// something, saved: through [`restarted_at`]'s stub, Rex's copies.
+/// something, saved: through [`RexStub::restarted_at`]'s stub, Rex's copies.
 fn two_saved_sessions(env: &TestEnv, server: &Server) -> [FixtureSession; 2] {
     let sessions = ["zz-a", "zz-b"].map(|label| {
         let session = server.create_session(label, &[window(shell(env.mkdir(label)))]);
@@ -79,7 +63,7 @@ fn restore_force_replaces_each_carried_over_session_with_its_saved_one() {
     let env = TestEnv::new();
     let server = env.start_server();
     let [a, b] = two_saved_sessions(&env, &server);
-    let stub = restarted_at(&env, LATER, 1);
+    let stub = RexStub::new(&env).restarted_at(LATER, 1);
 
     let out = run(&env, &server, &stub, &["restore", "--force"]).assert_success();
 
@@ -110,7 +94,7 @@ fn a_session_whose_create_fails_under_force_keeps_its_live_one() {
     let env = TestEnv::new();
     let server = env.start_server();
     let [a, b] = two_saved_sessions(&env, &server);
-    let stub = restarted_at(&env, LATER, 1).fail_when(
+    let stub = RexStub::new(&env).restarted_at(LATER, 1).fail_when(
         "session.create",
         "zz-a",
         1,
@@ -140,7 +124,7 @@ fn a_session_created_under_force_whose_blocks_cant_be_told_apart_still_replaces_
     let server = env.start_server();
     let [a, _] = two_saved_sessions(&env, &server);
     // session.create creates zz-a as asked, but answers with no block IDs.
-    let stub = restarted_at(&env, LATER, 1).rewrite_when(
+    let stub = RexStub::new(&env).restarted_at(LATER, 1).rewrite_when(
         "session.create",
         "zz-a",
         r#"s/"block_ids":\[[^]]*\]/"block_ids":[]/g"#,
@@ -161,7 +145,7 @@ fn a_dry_run_with_force_says_what_it_would_replace_and_changes_nothing() {
     let env = TestEnv::new();
     let server = env.start_server();
     let [a, b] = two_saved_sessions(&env, &server);
-    let stub = restarted_at(&env, LATER, 1);
+    let stub = RexStub::new(&env).restarted_at(LATER, 1);
 
     let out = run(&env, &server, &stub, &["restore", "--force", "--dry-run"]).assert_success();
 
@@ -183,7 +167,7 @@ fn force_with_a_session_label_replaces_only_that_labels_sessions_and_does_not_co
     let env = TestEnv::new();
     let server = env.start_server();
     let [a, b] = two_saved_sessions(&env, &server);
-    let stub = restarted_at(&env, LATER, 1);
+    let stub = RexStub::new(&env).restarted_at(LATER, 1);
 
     let out = run(
         &env,
@@ -210,7 +194,7 @@ fn force_run_inside_a_session_it_replaces_closes_that_session_last() {
     let [a, b] = two_saved_sessions(&env, &server);
     // What the log holds as Rex closes the session the run is in.
     let log_then = env.root().join("log-when-closing-own-session");
-    let stub = restarted_at(&env, LATER, 1).after(
+    let stub = RexStub::new(&env).restarted_at(LATER, 1).after(
         "session.destroy",
         &format!(
             r#"case "$input" in *{}*) cp {} {} ;; esac"#,
@@ -257,7 +241,7 @@ fn plain_restore_skips_carried_over_sessions_says_so_and_leaves_the_instance_unr
     let env = TestEnv::new();
     let server = env.start_server();
     let [a, b] = two_saved_sessions(&env, &server);
-    let stub = restarted_at(&env, LATER, 1);
+    let stub = RexStub::new(&env).restarted_at(LATER, 1);
 
     let out = run(&env, &server, &stub, &["restore"]).assert_success();
 
@@ -303,7 +287,7 @@ fn save_backs_off_on_an_unrestored_instance_holding_a_carried_over_session() {
     let server = env.start_server();
     let [a, b] = two_saved_sessions(&env, &server);
     let listed = env.listed(&server);
-    let stub = restarted_at(&env, LATER, 1);
+    let stub = RexStub::new(&env).restarted_at(LATER, 1);
 
     let out = run(&env, &server, &stub, &["save"]).assert_failure();
 
@@ -341,7 +325,7 @@ fn auto_restore_at_server_start_replaces_carried_over_sessions() {
     let server = env.server().shown_as(stub.dir().join("rex")).start();
     let [a, b] = two_saved_sessions(&env, &server);
     // Only now does the server look restarted.
-    let stub = stub.rewrite_when("server.status", "{", &restart_sed(LATER, 1));
+    let stub = stub.restarted_at(LATER, 1);
 
     let entry = auto_restore(&env, &server);
 
@@ -365,7 +349,7 @@ fn auto_restore_after_a_config_reload_only_skips_carried_over_sessions() {
     let stub = RexStub::new(&env);
     let server = env.server().shown_as(stub.dir().join("rex")).start();
     let [a, b] = two_saved_sessions(&env, &server);
-    let stub = stub.rewrite_when("server.status", "{", &restart_sed(LATER, 2));
+    let stub = stub.restarted_at(LATER, 2);
 
     let entry = auto_restore(&env, &server);
 
@@ -411,7 +395,7 @@ fn a_replaced_block_resumes_although_its_carried_over_shell_rewrote_its_record()
     let started_at = now_to_the_second();
     std::thread::sleep(std::time::Duration::from_millis(50));
     env.write_recorder_file(&block, "nvim init.lua");
-    let stub = restarted_at(&env, &started_at, 1);
+    let stub = RexStub::new(&env).restarted_at(&started_at, 1);
 
     run(&env, &server, &stub, &["restore", "--force"]).assert_success();
 
@@ -435,7 +419,7 @@ fn a_record_rewritten_before_the_restart_still_means_the_program_exited() {
     env.save(&server);
     std::thread::sleep(std::time::Duration::from_millis(50));
     env.write_recorder_file(&block, "nvim init.lua");
-    let stub = restarted_at(&env, LATER, 1);
+    let stub = RexStub::new(&env).restarted_at(LATER, 1);
 
     run(&env, &server, &stub, &["restore", "--force"]).assert_success();
 

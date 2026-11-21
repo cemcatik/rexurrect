@@ -85,4 +85,4 @@ pub use stand_in::{
     build_stand_in, report, restarted, restarted_after, restored_with_typed, run_and_wait, running,
     runs, stand_in_bin, wait_for_runs, write_session_vim,
 };
-pub use stub::{RecordingRex, RexStub, perl_rex};
+pub use stub::{LATER, RecordingRex, RexStub, perl_rex};

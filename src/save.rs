@@ -73,7 +73,7 @@ pub fn run() -> Result<ExitCode> {
     // server instance, and on which host is local.
     let server = rex.server_status()?;
     if !lock.is_restored(&server.instance_id)?
-        && restore::holds_carried_over_session(&rex, &state, &server, &config)?
+        && restore::holds_carried_over_session(&rex, &state, &server, &config.exclude_sessions)?
     {
         return Err(Error::new(
             "this server instance holds sessions Rex carried over when it started, without their \

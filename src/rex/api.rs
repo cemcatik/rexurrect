@@ -80,6 +80,7 @@ pub struct SessionList {
 #[derive(Debug, Deserialize)]
 pub struct SessionSummary {
     pub session_id: String,
+    pub label: String,
 }
 
 // ---- session.view ----------------------------------------------------------

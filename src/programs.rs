@@ -269,7 +269,7 @@ impl Programs {
                 };
                 match field.as_str() {
                     "match" => {
-                        definition.matches = config::program_names(value)
+                        definition.matches = config::string_list(value)
                             .filter(|names| !names.is_empty())
                             .ok_or_else(|| wrong("a list of program names, like [\"nvim\"]"))?;
                     }

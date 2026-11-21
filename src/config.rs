@@ -105,7 +105,7 @@ impl Config {
                     config.retention = Retention::new(keep);
                 }
                 "no_scrollback" => {
-                    let names = program_names(value)
+                    let names = string_list(value)
                         .ok_or_else(|| wrong("a list of program names, like [\"claude\"]"))?;
                     config.no_scrollback = NoScrollbackPrograms::new(names);
                 }
@@ -118,14 +118,18 @@ impl Config {
                 }
                 "programs" => config.programs = Programs::configured(value, path)?,
                 "auto_resume" => {
-                    config.auto_resume = program_names(value)
+                    config.auto_resume = string_list(value)
                         .ok_or_else(|| wrong("a list of program names, like [\"nvim\"]"))?;
                 }
                 "exclude_sessions" => {
-                    let patterns = program_names(value).ok_or_else(|| {
-                        wrong("a list of session labels, `*` matching any text, like [\"T3 Code\"]")
-                    })?;
-                    config.exclude_sessions = ExcludedSessions::new(patterns);
+                    config.exclude_sessions = string_list(value)
+                        .and_then(ExcludedSessions::new)
+                        .ok_or_else(|| {
+                            wrong(
+                                "a list of session labels, `*` matching any text, each with \
+                                 text other than `*`, like [\"T3 Code\"]",
+                            )
+                        })?;
                 }
                 _ => {
                     return Err(Error::new(format!(
@@ -177,9 +181,8 @@ fn seconds(value: &toml::Value) -> Option<Duration> {
     whole_number(value).map(|seconds| Duration::from_secs(seconds.get()))
 }
 
-/// A TOML array of strings: program names, or `exclude_sessions`' label
-/// patterns.
-pub fn program_names(value: &toml::Value) -> Option<Vec<String>> {
+/// A TOML array of strings.
+pub fn string_list(value: &toml::Value) -> Option<Vec<String>> {
     value
         .as_array()?
         .iter()
@@ -423,6 +426,14 @@ mod tests {
             ("auto_resume = \"nvim\"", "auto_resume"),
             ("exclude_sessions = \"T3 Code\"", "exclude_sessions"),
             ("exclude_sessions = [\"T3 Code\", 3]", "exclude_sessions"),
+            // A pattern needs text other than `*`: `"*"` would exclude every
+            // session, and `""` names none.
+            ("exclude_sessions = [\"*\"]", "exclude_sessions"),
+            (
+                "exclude_sessions = [\"T3 Code\", \"**\"]",
+                "exclude_sessions",
+            ),
+            ("exclude_sessions = [\"\"]", "exclude_sessions"),
         ] {
             let error = error(text);
             assert!(

@@ -13,6 +13,10 @@ use super::env::TestEnv;
 use super::scheduled::write_script;
 use super::server::rex_bin;
 
+/// A start time later than any snapshot a test takes, for
+/// [`RexStub::restarted_at`].
+pub const LATER: &str = "2099-01-01T00:00:00.000000Z";
+
 /// A directory holding a stub `rex` script. Put it first on one run's
 /// `PATH` with `env.rexurrect(&server).path_prepend(stub.dir())`.
 ///
@@ -122,6 +126,18 @@ impl RexStub {
             matching: matching(method, &[]),
             command: command.to_string(),
         })
+    }
+
+    /// Makes the server look restarted at `started_at` (a new server
+    /// instance), with init.lua run `generation` times in it: 1 at the
+    /// start, more after each `rex config reload`. Its sessions stay live
+    /// with their IDs, as Rex's copies of a carried-over session do
+    /// (ADR-0008).
+    pub fn restarted_at(self, started_at: &str, generation: u32) -> RexStub {
+        let sed = format!(
+            r#"s/"instance_id":"[^"]*"/"instance_id":"zz-carried-over-instance"/;s/"started_at":"[^"]*"/"started_at":"{started_at}"/;s/"generation":[0-9]*/"generation":{generation}/"#
+        );
+        self.rewrite_when("server.status", "{", &sed)
     }
 
     /// The directory to put first on `PATH`.
