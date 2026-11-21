@@ -79,6 +79,10 @@ A server with no live sessions worth saving: none at all, or only untouched ones
 A server instance that's an empty server because the user closed its sessions: rexurrect restored into it, at least in part, or has saved from it since a failed restore. An empty server on any other instance is one the user hasn't worked in yet.
 _Avoid_: closed server, cleared server
 
+**Excluded session**:
+A session whose label matches a pattern in `exclude_sessions`: one another tool makes and keeps up itself. Save doesn't save it, and restore neither creates nor replaces it (ADR-0010).
+_Avoid_: ignored session (ignoring is what the recorder does to commands), managed session
+
 **Untouched session**:
 A session with nothing worth restoring: one window holding one shell block, default window and block labels, its working directory still home, and no last command. Its label doesn't count, so a session that was only renamed is still untouched. Untouched sessions aren't saved.
 

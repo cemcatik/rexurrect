@@ -73,7 +73,7 @@ pub fn run() -> Result<ExitCode> {
     // server instance, and on which host is local.
     let server = rex.server_status()?;
     if !lock.is_restored(&server.instance_id)?
-        && restore::holds_carried_over_session(&rex, &state, &server)?
+        && restore::holds_carried_over_session(&rex, &state, &server, &config)?
     {
         return Err(Error::new(
             "this server instance holds sessions Rex carried over when it started, without their \
@@ -193,6 +193,11 @@ fn save_snapshot(
     for summary in rex.list_sessions()? {
         let view = rex.view_session(&summary.session_id)?;
         live.add(&view);
+        // Left to the tool that makes it (ADR-0010): never saved, so never
+        // restored or replaced.
+        if config.exclude_sessions.contains(&view.label) {
+            continue;
+        }
         let lineage = lineages.lineage_of(&view.session_id);
         let session = format!("session {:?} ({})", view.label, view.session_id);
         let saving = || format!("saving {session}");

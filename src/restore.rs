@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::create;
 use crate::defaults::DefaultCommands;
 use crate::error::{Context, Error, Result};
+use crate::excluded::ExcludedSessions;
 use crate::exited;
 use crate::instance::RestoreLock;
 use crate::lineage::{Lineage, LineageMap};
@@ -93,6 +94,9 @@ pub enum Outcome {
         /// of a snapshot taken before this server instance started.
         carried_over: bool,
     },
+    /// Its label is excluded (`exclude_sessions`, ADR-0010): restore
+    /// neither creates it nor replaces a live session of its lineage.
+    Excluded { label: String },
     Failed {
         label: String,
         error: String,
@@ -266,10 +270,14 @@ impl RestoreReport {
                     live_session_id,
                     ..
                 } => writeln!(out, "skipped  {label}  (live as {live_session_id})")?,
+                Outcome::Excluded { label } => {
+                    writeln!(out, "excluded  {label}  (exclude_sessions)")?
+                }
                 Outcome::Failed { label, error, .. } => writeln!(out, "failed   {label}: {error}")?,
             }
         }
-        let skipped = self.count(|o| matches!(o, Outcome::Skipped { .. }));
+        let skipped =
+            self.count(|o| matches!(o, Outcome::Skipped { .. } | Outcome::Excluded { .. }));
         if self.dry_run {
             return writeln!(
                 out,
@@ -368,6 +376,7 @@ pub fn holds_carried_over_session(
     rex: &Rex,
     state: &StateDir,
     server: &ServerStatus,
+    config: &Config,
 ) -> Result<bool> {
     let Some((_, snapshot)) = SnapshotStore::new(state).read_latest()? else {
         return Ok(false);
@@ -377,6 +386,7 @@ pub fn holds_carried_over_session(
         rex,
         &snapshot,
         server,
+        &config.exclude_sessions,
         live.iter().map(|s| s.session_id.as_str()),
     )?;
     Ok(!carried_over.is_empty())
@@ -393,10 +403,13 @@ fn taken_in_an_earlier_instance(snapshot: &Snapshot, server: &ServerStatus) -> b
 /// also in `snapshot`, taken before the instance started. Block IDs are
 /// never reused, so only Rex's own restore brings one into a later
 /// instance. Looks at none of them when `snapshot` was taken in this one.
+/// The blocks of `excluded` saved sessions, from a snapshot taken before
+/// they were excluded, don't count: rexurrect leaves those sessions be.
 fn carried_over_sessions<'a>(
     rex: &Rex,
     snapshot: &Snapshot,
     server: &ServerStatus,
+    excluded: &ExcludedSessions,
     session_ids: impl IntoIterator<Item = &'a str>,
 ) -> Result<HashSet<String>> {
     if !taken_in_an_earlier_instance(snapshot, server) {
@@ -405,6 +418,7 @@ fn carried_over_sessions<'a>(
     let saved: HashSet<&str> = snapshot
         .sessions
         .iter()
+        .filter(|saved| !excluded.contains(&saved.label))
         .flat_map(SavedSession::blocks)
         .filter_map(|block| block.block_id.as_deref())
         .collect();
@@ -478,7 +492,7 @@ fn restore_sessions(
         (HashSet::new(), own_session)
     } else {
         (
-            carried_over_sessions(rex, &snapshot, server, matched())?,
+            carried_over_sessions(rex, &snapshot, server, &config.exclude_sessions, matched())?,
             None,
         )
     };
@@ -508,6 +522,10 @@ fn restore_sessions(
     };
     for saved in selected {
         let label = saved.label.clone();
+        if config.exclude_sessions.contains(&label) {
+            report.outcomes.push(Outcome::Excluded { label });
+            continue;
+        }
         let replacing = match live.get(&saved.lineage) {
             None => None,
             Some(live_session_id) if options.force => Some(live_session_id.clone()),
