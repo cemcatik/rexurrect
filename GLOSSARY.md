@@ -115,7 +115,7 @@ _Avoid_: existing session, current session
 A session as recorded in a snapshot.
 
 **Restored session**:
-A live session that restore created from a saved session. It belongs to the saved session's lineage, whatever it's labeled.
+A live session that restore created from a saved session. It belongs to the saved session's lineage, whatever it's labelled.
 
 **Lineage**:
 A session plus every session restore has created from it, across any number of restarts. Only one session of a lineage is ever live.
@@ -132,7 +132,7 @@ The first two minutes after restore creates a session, while its blocks' shells 
 A saved session that restore doesn't create because a session of its lineage is already live, or because it's an excluded session (reported as excluded, and counted with the skipped ones). A live session with the same label but a different lineage doesn't count.
 
 **Carried-over session**:
-A live session Rex brought back by itself when its server started, keeping its ID and its blocks' IDs but not their scrollback or programs. rexurrect knows one by a block that's also in a snapshot taken before the server instance started, unless it's an excluded session.
+A live session Rex brought back by itself when its server started, keeping its ID and its blocks' IDs but not their scrollback or programs. rexurrect knows one by a block that's also in a snapshot taken before the server instance started.
 _Avoid_: Rex-restored session, native session
 
 **Replaced session**:
@@ -140,7 +140,7 @@ A live session of a saved session's lineage that restore closed after creating t
 _Avoid_: forced session, overwritten session
 
 **Unrestored server instance**:
-A server instance rexurrect hasn't restored into yet. Save restores before saving from one, so a freshly started server never replaces the latest snapshot. If it holds carried-over sessions, save neither restores nor saves: it leaves them for auto-restore or `restore --force` to replace.
+A server instance rexurrect hasn't restored into yet. Save restores before saving from one, so a freshly started server never replaces the latest snapshot. If it holds carried-over sessions other than excluded ones, save neither restores nor saves: it leaves them for auto-restore or `restore --force` to replace.
 
 **Auto-restore**:
 A restore that runs by itself once per server instance, as soon as the server is ready.

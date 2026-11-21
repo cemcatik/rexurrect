@@ -4,9 +4,10 @@
 //! nor replaces them, auto-restore at server start included, even from a
 //! snapshot taken before they were excluded.
 //!
-//! As in `carried_over.rs`, a stub ([`RexStub::restarted_at`]) plays Rex's restart: a new server
-//! instance, started after the snapshot was taken, with the snapshot's
-//! sessions still live under the IDs they were saved with.
+//! As in `carried_over.rs`, a stub ([`RexStub::restarted_at`]) plays
+//! Rex's restart: a new server instance, started after the snapshot was
+//! taken, with the snapshot's sessions still live under the IDs they were
+//! saved with.
 
 mod common;
 
@@ -145,7 +146,8 @@ fn restore_force_leaves_a_session_relabelled_as_excluded_alone() {
         .assert_success();
 
     assert!(
-        out.stdout.contains("excluded  zz-tool  (exclude_sessions)"),
+        out.stdout
+            .contains("excluded  zz-a  (live label zz-tool, exclude_sessions)"),
         "{out}"
     );
     assert_eq!(server.session_ids_labelled("zz-tool"), [taken_over.id]);

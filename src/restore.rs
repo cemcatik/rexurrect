@@ -96,10 +96,14 @@ pub enum Outcome {
         /// of a snapshot taken before this server instance started.
         carried_over: bool,
     },
-    /// Its label, or the live session of its lineage's, is excluded
-    /// (`exclude_sessions`, ADR-0010): restore neither creates it nor
-    /// replaces that live session. `label` is the one excluded.
-    Excluded { label: String },
+    /// It's an excluded session (`exclude_sessions`, ADR-0010): restore
+    /// neither creates it nor replaces the live session of its lineage.
+    Excluded {
+        label: String,
+        /// The live session's label, when that's the excluded one and the
+        /// saved label isn't: a tool took the session over and relabelled it.
+        live_label: Option<String>,
+    },
     Failed {
         label: String,
         error: String,
@@ -273,9 +277,17 @@ impl RestoreReport {
                     live_session_id,
                     ..
                 } => writeln!(out, "skipped  {label}  (live as {live_session_id})")?,
-                Outcome::Excluded { label } => {
-                    writeln!(out, "excluded  {label}  (exclude_sessions)")?
-                }
+                Outcome::Excluded {
+                    label,
+                    live_label: None,
+                } => writeln!(out, "excluded  {label}  (exclude_sessions)")?,
+                Outcome::Excluded {
+                    label,
+                    live_label: Some(live_label),
+                } => writeln!(
+                    out,
+                    "excluded  {label}  (live label {live_label}, exclude_sessions)"
+                )?,
                 Outcome::Failed { label, error, .. } => writeln!(out, "failed   {label}: {error}")?,
             }
         }
@@ -478,15 +490,15 @@ fn restore_sessions(
     let selected = selected_sessions(&snapshot, options)?;
     let live_sessions = rex.list_sessions()?;
     let mut lineages = LineageMap::load(state)?;
-    let mut live: HashMap<Lineage, String> = live_sessions
+    let mut live: HashMap<Lineage, SessionSummary> = live_sessions
         .iter()
-        .map(|s| (lineages.lineage_of(&s.session_id), s.session_id.clone()))
+        .map(|s| (lineages.lineage_of(&s.session_id), s.clone()))
         .collect();
     // The live sessions of the selected saved sessions' lineages: the ones
     // restore skips, or with `force` replaces.
     let matched: Vec<String> = selected
         .iter()
-        .filter_map(|saved| live.get(&saved.lineage).cloned())
+        .filter_map(|saved| live.get(&saved.lineage).map(|s| s.session_id.clone()))
         .collect();
     let matched = || matched.iter().map(String::as_str);
     let (carried_over, own_session) = if options.force {
@@ -525,14 +537,24 @@ fn restore_sessions(
         dry_run: options.dry_run,
         ..RestoreReport::default()
     };
+    let excluded = &config.exclude_sessions;
     for saved in selected {
         let label = saved.label.clone();
-        if let Some(label) = excluded_label(saved, &live, &live_sessions, &config.exclude_sessions)
-        {
-            report.outcomes.push(Outcome::Excluded { label });
+        let live_session = live.get(&saved.lineage);
+        // Excluded by its saved label, or by its live one, which a tool may
+        // have given it since it was saved.
+        let saved_excluded = excluded.contains(&label);
+        let relabelled = live_session
+            .map(|s| &s.label)
+            .filter(|live_label| !saved_excluded && excluded.contains(live_label));
+        if saved_excluded || relabelled.is_some() {
+            let live_label = relabelled.cloned();
+            report
+                .outcomes
+                .push(Outcome::Excluded { label, live_label });
             continue;
         }
-        let replacing = match live.get(&saved.lineage) {
+        let replacing = match live_session.map(|s| &s.session_id) {
             None => None,
             Some(live_session_id) if options.force => Some(live_session_id.clone()),
             Some(live_session_id) => {
@@ -556,7 +578,8 @@ fn restore_sessions(
         }
         let (outcome, created) = creating.create(saved)?;
         if let Some(session_id) = created {
-            live.insert(saved.lineage.clone(), session_id);
+            let label = saved.label.clone();
+            live.insert(saved.lineage.clone(), SessionSummary { session_id, label });
         }
         report.outcomes.push(match replacing {
             Some(live_session_id) => {
@@ -567,25 +590,6 @@ fn restore_sessions(
         });
     }
     Ok(report)
-}
-
-/// The excluded label (`exclude_sessions`, ADR-0010) that leaves `saved`
-/// unrestored: its own, or that of the live session of its lineage, which
-/// a tool may have relabelled since it was saved.
-fn excluded_label(
-    saved: &SavedSession,
-    live: &HashMap<Lineage, String>,
-    live_sessions: &[SessionSummary],
-    excluded: &ExcludedSessions,
-) -> Option<String> {
-    let live_label = live
-        .get(&saved.lineage)
-        .and_then(|id| live_sessions.iter().find(|s| &s.session_id == id))
-        .map(|s| &s.label);
-    std::iter::once(&saved.label)
-        .chain(live_label)
-        .find(|label| excluded.contains(label))
-        .cloned()
 }
 
 /// Closes the live session `live_session_id` that `outcome`, the creation

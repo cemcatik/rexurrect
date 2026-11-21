@@ -6,10 +6,10 @@
 //! instance as restored, and save backs off.
 //!
 //! The throwaway servers' Rex doesn't carry sessions over, so a stub
-//! ([`RexStub::restarted_at`]) plays the restart: it reports a new server instance,
-//! started after the snapshot was taken, while the snapshot's sessions are
-//! still live with the IDs they were saved with. That's what Rex's copies
-//! look like.
+//! ([`RexStub::restarted_at`]) plays the restart: it reports a new server
+//! instance, started after the snapshot was taken, while the snapshot's
+//! sessions are still live with the IDs they were saved with. That's what
+//! Rex's copies look like.
 
 mod common;
 
@@ -17,7 +17,8 @@ use common::stub::sh_quote;
 use common::*;
 
 /// Two sessions, each a shell in its own directory that has printed
-/// something, saved: through [`RexStub::restarted_at`]'s stub, Rex's copies.
+/// something, saved: through a [`RexStub::restarted_at`] stub, Rex's
+/// copies.
 fn two_saved_sessions(env: &TestEnv, server: &Server) -> [FixtureSession; 2] {
     let sessions = ["zz-a", "zz-b"].map(|label| {
         let session = server.create_session(label, &[window(shell(env.mkdir(label)))]);

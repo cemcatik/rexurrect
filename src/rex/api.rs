@@ -77,7 +77,7 @@ pub struct SessionList {
     pub sessions: Vec<SessionSummary>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SessionSummary {
     pub session_id: String,
     pub label: String,
