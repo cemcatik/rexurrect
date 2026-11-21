@@ -84,7 +84,7 @@ mod tests {
         // The last part can't reuse characters a middle part matched.
         assert!(!sessions.contains("ab"));
         assert!(excluded(&["*"]).contains(""));
-        assert!(!excluded(&["ab*ba"]).contains("aba"));
+        assert!(!excluded(&["xy*yx"]).contains("xyx"));
     }
 
     #[test]
