@@ -345,6 +345,24 @@ starts saving without because it's too large, and `restore --force` logs its rep
 closes the session it runs in. Once the log passes 1 MB (an autosave failing
 every 15 minutes while Rex is quit gets it there in a few months), it keeps only its newest half.
 
+### Sessions other tools make
+
+Some tools make a Rex session of their own and keep it up themselves, such as
+[tr3x](https://github.com/macnason/tr3x)'s **T3 Code**: its blocks run the tool's programs, and
+the tool remembers the session by its ID. Restoring a copy of it brings those blocks back as
+shells, and the tool, finding its session gone, makes another beside it. List such sessions'
+labels in `exclude_sessions` in the [config file](#settings), each `*` matching any text, and
+rexurrect leaves them to the tool:
+
+```toml
+exclude_sessions = ["T3 Code", "T3 Code · *"]
+```
+
+Save doesn't save them, and restore (auto-restore and `--force` too) neither creates nor replaces
+them, even from a snapshot taken before you excluded them: it prints
+`excluded  <label>  (exclude_sessions)` for each. See
+[ADR-0010](docs/adr/0010-leave-excluded-sessions-to-the-tools-that-make-them.md).
+
 ### Which server
 
 `REX_SERVER` if set (Rex sets it in every block's shell), otherwise the `rex` CLI's default.
@@ -668,6 +686,9 @@ ready_timeout = 60
 app_session_watch = 30
 # The programs that come back running, not just typed (see Resuming programs); [] for none.
 auto_resume = []
+# The labels of sessions another tool makes and keeps up, which rexurrect never
+# saves, restores or replaces (see Sessions other tools make); * matches any text.
+exclude_sessions = []
 ```
 
 `[programs.<name>]` tables change and add program definitions: see

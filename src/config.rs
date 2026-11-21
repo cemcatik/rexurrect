@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{Context, Error, Result};
+use crate::excluded::ExcludedSessions;
 use crate::log;
 use crate::programs::Programs;
 use crate::retention::Retention;
@@ -58,6 +59,9 @@ pub struct Config {
     /// `auto_resume`: the program definitions whose programs restore runs
     /// rather than types (ADR-0006); none by default.
     pub auto_resume: Vec<String>,
+    /// `exclude_sessions`: the label patterns of the sessions rexurrect
+    /// leaves to the tools that make them (ADR-0010); none by default.
+    pub exclude_sessions: ExcludedSessions,
 }
 
 impl Default for Config {
@@ -69,6 +73,7 @@ impl Default for Config {
             app_session_watch: Duration::from_secs(30),
             programs: Programs::default(),
             auto_resume: Vec::new(),
+            exclude_sessions: ExcludedSessions::default(),
         }
     }
 }
@@ -116,6 +121,12 @@ impl Config {
                     config.auto_resume = program_names(value)
                         .ok_or_else(|| wrong("a list of program names, like [\"nvim\"]"))?;
                 }
+                "exclude_sessions" => {
+                    let patterns = program_names(value).ok_or_else(|| {
+                        wrong("a list of session labels, `*` matching any text, like [\"T3 Code\"]")
+                    })?;
+                    config.exclude_sessions = ExcludedSessions::new(patterns);
+                }
                 _ => {
                     return Err(Error::new(format!(
                         "`{key}` in {} isn't a setting rexurrect knows; it knows {}",
@@ -142,12 +153,13 @@ impl Config {
 }
 
 /// Every key the file can set.
-const KEYS: [&str; 6] = [
+const KEYS: [&str; 7] = [
     "keep",
     "no_scrollback",
     "ready_timeout",
     "app_session_watch",
     "auto_resume",
+    "exclude_sessions",
     "programs",
 ];
 
@@ -165,7 +177,8 @@ fn seconds(value: &toml::Value) -> Option<Duration> {
     whole_number(value).map(|seconds| Duration::from_secs(seconds.get()))
 }
 
-/// A TOML array of strings.
+/// A TOML array of strings: program names, or `exclude_sessions`' label
+/// patterns.
 pub fn program_names(value: &toml::Value) -> Option<Vec<String>> {
     value
         .as_array()?
@@ -353,6 +366,7 @@ mod tests {
         assert_eq!(config.ready_timeout, Duration::from_secs(60));
         assert_eq!(config.app_session_watch, Duration::from_secs(30));
         assert!(config.auto_resume.is_empty());
+        assert!(config.exclude_sessions.patterns().is_empty());
     }
 
     #[test]
@@ -362,7 +376,8 @@ mod tests {
              no_scrollback = [\"claude\", \"aider\"]\n\
              ready_timeout = 5\n\
              app_session_watch = 7\n\
-             auto_resume = [\"nvim\", \"claude\"]\n",
+             auto_resume = [\"nvim\", \"claude\"]\n\
+             exclude_sessions = [\"T3 Code\", \"T3 Code · *\"]\n",
         )
         .unwrap();
         assert_eq!(config.retention.keep(), 3);
@@ -370,6 +385,10 @@ mod tests {
         assert_eq!(config.ready_timeout, Duration::from_secs(5));
         assert_eq!(config.app_session_watch, Duration::from_secs(7));
         assert_eq!(config.auto_resume, ["nvim", "claude"]);
+        assert_eq!(
+            config.exclude_sessions.patterns(),
+            ["T3 Code", "T3 Code · *"]
+        );
     }
 
     #[test]
@@ -402,6 +421,8 @@ mod tests {
             ("ready_timeout = \"soon\"", "ready_timeout"),
             ("app_session_watch = 1.5", "app_session_watch"),
             ("auto_resume = \"nvim\"", "auto_resume"),
+            ("exclude_sessions = \"T3 Code\"", "exclude_sessions"),
+            ("exclude_sessions = [\"T3 Code\", 3]", "exclude_sessions"),
         ] {
             let error = error(text);
             assert!(
